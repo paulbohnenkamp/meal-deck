@@ -1,8 +1,6 @@
-# Suvie MealDeck
+# MealDeck
 
-A working MVP for photographing Suvie meal boxes/cards, tracking freezer inventory, counting nutrition, and randomly choosing dinner without repeating a meal eaten in the previous seven days.
-
-> **Working-name notice:** “Suvie MealDeck” is an independent project name and is not affiliated with or endorsed by Suvie. Check naming and trademark requirements before an App Store release. The display name is configurable in `mobile/app.json`.
+A working MVP for photographing prepared meal boxes or cards, tracking freezer inventory, counting nutrition, and randomly choosing dinner without repeating a meal eaten in the previous seven days.
 
 ## What is included
 
@@ -22,7 +20,7 @@ A working MVP for photographing Suvie meal boxes/cards, tracking freezer invento
 ## Repository layout
 
 ```text
-suvie-mealdeck/
+meal-deck/
 ├── mobile/       Expo / React Native app (iOS + web)
 ├── backend/      Spring Boot REST API
 ├── docs/         Architecture and API notes
@@ -121,7 +119,7 @@ When every stocked meal is recent, the UI offers a relaxed draw that ignores the
 
 ### Nutrition
 
-Nutrition is stored **per serving**, with two servings fixed for each Suvie box. The app emphasizes carbs per serving and whole-box carbs for carb counting.
+Nutrition is stored **per serving**, with two servings fixed for each meal box. The app emphasizes carbs per serving and whole-box carbs for carb counting.
 
 ## MVP boundary: photo extraction
 

@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Suvie MealDeck",
-    "slug": "suvie-mealdeck",
+    "name": "MealDeck",
+    "slug": "meal-deck",
     "scheme": "mealdeck",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -14,14 +14,14 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.mealdeck.suvie",
+      "bundleIdentifier": "app.mealdeck.mobile",
       "infoPlist": {
-        "NSCameraUsageDescription": "Take photos of Suvie meal cards for freezer inventory.",
-        "NSPhotoLibraryUsageDescription": "Choose Suvie meal photos from your library."
+        "NSCameraUsageDescription": "Take photos of prepared meal cards for freezer inventory.",
+        "NSPhotoLibraryUsageDescription": "Choose prepared meal photos from your library."
       }
     },
     "android": {
-      "package": "app.mealdeck.suvie",
+      "package": "app.mealdeck.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#F7F7F2",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -37,8 +37,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Suvie MealDeck to access meal photos.",
-          "cameraPermission": "Allow Suvie MealDeck to photograph meal cards."
+          "photosPermission": "Allow MealDeck to access meal photos.",
+          "cameraPermission": "Allow MealDeck to photograph meal cards."
         }
       ]
     ]

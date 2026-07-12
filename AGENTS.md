@@ -1,8 +1,8 @@
-# AGENTS.md — Suvie MealDeck
+# AGENTS.md — MealDeck
 
 ## Product intent
 
-MealDeck helps a two-person household keep an accurate freezer inventory of prepared Suvie meals and decide dinner without repeating a meal eaten in the last seven days. Carb visibility is a first-class requirement.
+MealDeck helps a two-person household keep an accurate freezer inventory of prepared meals and decide dinner without repeating a meal eaten in the last seven days. Carb visibility is a first-class requirement.
 
 ## Non-negotiable behavior
 

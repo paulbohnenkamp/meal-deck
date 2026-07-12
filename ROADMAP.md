@@ -1,4 +1,4 @@
-# Suvie MealDeck Roadmap
+# MealDeck Roadmap
 
 ## Milestone 1 — MVP hardening
 

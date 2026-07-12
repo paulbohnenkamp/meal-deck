@@ -182,7 +182,7 @@ export default function App() {
 
   async function saveMeal() {
     if (!form.name.trim()) {
-      Alert.alert('Meal name required', 'Enter the name shown on the Suvie meal card.');
+      Alert.alert('Meal name required', 'Enter the name shown on the prepared meal card.');
       return;
     }
     setBusy(true);
@@ -225,7 +225,7 @@ export default function App() {
       <SafeAreaView style={styles.loadingScreen}>
         <StatusBar style="dark" />
         <View style={styles.logoMark}><Text style={styles.logoEmoji}>M</Text></View>
-        <Text style={styles.loadingTitle}>Suvie MealDeck</Text>
+        <Text style={styles.loadingTitle}>MealDeck</Text>
         <ActivityIndicator size="large" color={colors.accent} style={{ marginTop: 24 }} />
       </SafeAreaView>
     );
@@ -297,7 +297,7 @@ function Header({ mode }: { mode: string }) {
     <View style={styles.header}>
       <View style={styles.logoMark}><Text style={styles.logoEmoji}>M</Text></View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.brandName}>Suvie MealDeck</Text>
+        <Text style={styles.brandName}>MealDeck</Text>
         <Text style={styles.brandTagline}>Freezer inventory · dinner decided</Text>
       </View>
       <Pill tone={mode === 'server' ? 'mint' : 'neutral'}>{mode === 'server' ? 'Synced' : 'On device'}</Pill>
@@ -368,7 +368,7 @@ function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncremen
   return (
     <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <View style={styles.titleRow}>
-        <View><Text style={styles.pageTitle}>Freezer</Text><Text style={styles.pageSubtitle}>Each item is a two-person Suvie meal.</Text></View>
+        <View><Text style={styles.pageTitle}>Freezer</Text><Text style={styles.pageSubtitle}>Each item is a two-person prepared meal.</Text></View>
         <Pressable onPress={onAdd} style={styles.addCircle}><Text style={styles.addCircleText}>＋</Text></Pressable>
       </View>
       <TextInput value={search} onChangeText={setSearch} placeholder="Search meals" placeholderTextColor="#92969B" style={styles.searchInput} />

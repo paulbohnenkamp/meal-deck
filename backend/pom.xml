@@ -10,8 +10,8 @@
   <groupId>app.mealdeck</groupId>
   <artifactId>mealdeck-api</artifactId>
   <version>0.1.0</version>
-  <name>Suvie MealDeck API</name>
-  <description>Inventory and dinner randomizer API for Suvie meals</description>
+  <name>MealDeck API</name>
+  <description>Inventory and dinner randomizer API for prepared meals</description>
   <properties>
     <java.version>21</java.version>
   </properties>
