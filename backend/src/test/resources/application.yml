@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:mealdeck-test;DB_CLOSE_DELAY=-1
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+mealdeck:
+  upload-dir: ./target/test-uploads

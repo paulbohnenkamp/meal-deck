@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: mealdeck-api
+  datasource:
+    url: jdbc:h2:file:./data/mealdeck;AUTO_SERVER=TRUE
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+server:
+  port: ${PORT:8080}
+mealdeck:
+  upload-dir: ${MEALDECK_UPLOAD_DIR:./data/uploads}

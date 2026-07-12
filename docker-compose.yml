@@ -1,0 +1,12 @@
+services:
+  api:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - mealdeck-data:/app/data
+    environment:
+      MEALDECK_UPLOAD_DIR: /app/data/uploads
+
+volumes:
+  mealdeck-data:

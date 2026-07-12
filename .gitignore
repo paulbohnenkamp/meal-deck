@@ -1,0 +1,13 @@
+.DS_Store
+.idea/
+.vscode/
+*.iml
+.env
+mobile/.env
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/dist-test/
+backend/target/
+backend/data/
+.mvn/download/
