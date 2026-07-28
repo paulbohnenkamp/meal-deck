@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  ActionSheetIOS,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -16,11 +17,13 @@ import {
   View
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as Device from 'expo-device';
 import { StatusBar } from 'expo-status-bar';
 import { Card, MealImage, NutritionRow, Pill, PrimaryButton } from './src/components';
 import { data, dataMode } from './src/data';
+import { photoCaptureStep, photoFormPatch, PhotoSide } from './src/photoFlow';
 import { colors } from './src/theme';
-import { Dashboard, HistoryEntry, Meal, MealInput, PickResult } from './src/types';
+import { Dashboard, HistoryEntry, Meal, MealInput } from './src/types';
 
 type Tab = 'home' | 'inventory' | 'add' | 'history';
 
@@ -28,21 +31,24 @@ type FormState = {
   name: string;
   description: string;
   category: string;
-  quantity: string;
   calories: string;
   carbs: string;
   protein: string;
   fat: string;
   sodium: string;
-  imageUri: string;
-  imageBase64?: string;
-  imageMime?: string;
-  imageName?: string;
+  frontImageUri: string;
+  frontImageBase64?: string;
+  frontImageMime?: string;
+  frontImageName?: string;
+  backImageUri: string;
+  backImageBase64?: string;
+  backImageMime?: string;
+  backImageName?: string;
 };
 
 const emptyForm: FormState = {
-  name: '', description: '', category: '', quantity: '1', calories: '', carbs: '',
-  protein: '', fat: '', sodium: '', imageUri: ''
+  name: '', description: '', category: '', calories: '', carbs: '',
+  protein: '', fat: '', sodium: '', frontImageUri: '', backImageUri: ''
 };
 
 export default function App() {
@@ -54,7 +60,11 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [picked, setPicked] = useState<PickResult | null>(null);
+  const [picked, setPicked] = useState<Meal | null>(null);
+  const [drawAllowsRecent, setDrawAllowsRecent] = useState(false);
+  const [photoReady, setPhotoReady] = useState({ front: false, back: false });
+  const [extractionStatus, setExtractionStatus] = useState<'idle' | 'reading' | 'ready' | 'error'>('idle');
+  const [extractionError, setExtractionError] = useState('');
   const [form, setForm] = useState<FormState>(emptyForm);
   const [search, setSearch] = useState('');
 
@@ -77,19 +87,51 @@ export default function App() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  async function extractMeal() {
+    if (!photoReady.front || !photoReady.back || !form.frontImageUri || !form.backImageUri) {
+      Alert.alert('Two photos required', 'Add the meal-card front and cooking-guide back first.');
+      return;
+    }
+    setExtractionStatus('reading');
+    setExtractionError('');
+    try {
+      const extraction = await data.extractMeal(
+        form.frontImageUri,
+        form.backImageUri,
+        form.frontImageMime,
+        form.backImageMime
+      );
+      setForm(current => ({
+        ...current,
+        name: extraction.name ?? '',
+        description: extraction.description ?? '',
+        category: extraction.category ?? '',
+        calories: valueText(extraction.caloriesPerServing),
+        carbs: valueText(extraction.carbsPerServing),
+        protein: valueText(extraction.proteinPerServing),
+        fat: valueText(extraction.fatPerServing),
+        sodium: valueText(extraction.sodiumMgPerServing)
+      }));
+      setExtractionStatus('ready');
+    } catch (error) {
+      setExtractionError(errorMessage(error));
+      setExtractionStatus('error');
+    }
+  }
+
   const filteredMeals = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return meals;
     return meals.filter(meal => [meal.name, meal.description, meal.category].some(value => value?.toLowerCase().includes(query)));
   }, [meals, search]);
 
-  async function drawDinner(allowRecent = false) {
+  async function drawDinner(allowRecent = false, excludeMealId?: string) {
     setBusy(true);
     setNotice(null);
     try {
-      const result = await data.pickRandom(7, allowRecent);
+      const result = await data.previewRandom(7, allowRecent, excludeMealId);
       setPicked(result);
-      await refresh();
+      setDrawAllowsRecent(allowRecent);
     } catch (error) {
       const message = errorMessage(error);
       if (message.toLowerCase().includes('relaxed draw')) {
@@ -102,12 +144,30 @@ export default function App() {
     }
   }
 
+  async function drawAnotherDinner() {
+    await drawDinner(drawAllowsRecent, picked?.id);
+  }
+
+  async function confirmDinner() {
+    if (!picked) return;
+    setBusy(true);
+    try {
+      await data.consume(picked.id, 7);
+      setPicked(null);
+      await refresh();
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function consumeMeal(meal: Meal) {
     setBusy(true);
     try {
       const result = await data.consume(meal.id, 7);
-      setPicked(result);
       await refresh();
+      setNotice(`${result.meal.name} was removed from the freezer and added to dinner history.`);
     } catch (error) {
       showError(error);
     } finally {
@@ -129,7 +189,7 @@ export default function App() {
   }
 
   async function removeMeal(meal: Meal) {
-    if (!(await confirmAction(`Delete ${meal.name}?`, 'This removes every box of this meal from inventory.'))) return;
+    if (!(await confirmAction(`Delete ${meal.name}?`, 'This removes every copy of this meal from inventory.'))) return;
     setBusy(true);
     try {
       await data.deleteMeal(meal.id);
@@ -154,8 +214,19 @@ export default function App() {
     }
   }
 
-  async function choosePhoto(camera: boolean) {
+  async function choosePhoto(camera: boolean, side: PhotoSide) {
     try {
+      if (camera && Platform.OS === 'ios' && !Device.isDevice) {
+        Alert.alert(
+          'Camera unavailable in Simulator',
+          'The iOS Simulator has no camera. Choose a meal photo from the simulated photo library instead.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Choose photo', onPress: () => void choosePhoto(false, side) }
+          ]
+        );
+        return;
+      }
       if (camera) {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (!permission.granted) {
@@ -165,54 +236,91 @@ export default function App() {
       }
       const result = camera
         ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.5, base64: dataMode === 'local' })
-        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5, base64: dataMode === 'local' });
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 0.5,
+            base64: dataMode === 'local',
+            preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible
+          });
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
+      setPhotoReady(current => ({ ...current, [side]: false }));
+      setExtractionStatus('idle');
+      setExtractionError('');
       setForm(current => ({
         ...current,
-        imageUri: asset.uri,
-        imageBase64: asset.base64 ?? undefined,
-        imageMime: asset.mimeType ?? 'image/jpeg',
-        imageName: asset.fileName ?? 'meal.jpg'
+        name: '', description: '', category: '', calories: '', carbs: '', protein: '', fat: '', sodium: '',
+        ...photoFormPatch(side, asset)
       }));
     } catch (error) {
       showError(error);
     }
   }
 
+  function addPhoto(side: PhotoSide) {
+    if (Platform.OS === 'ios' && !Device.isDevice) {
+      void choosePhoto(false, side);
+      return;
+    }
+    const title = side === 'front' ? 'Add meal-card front' : 'Add cooking-guide back';
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title,
+          options: ['Cancel', 'Take photo', 'Choose from library'],
+          cancelButtonIndex: 0
+        },
+        index => {
+          if (index === 1) void choosePhoto(true, side);
+          if (index === 2) void choosePhoto(false, side);
+        }
+      );
+      return;
+    }
+    Alert.alert(title, undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Take photo', onPress: () => void choosePhoto(true, side) },
+      { text: 'Choose from library', onPress: () => void choosePhoto(false, side) }
+    ]);
+  }
+
   async function saveMeal() {
+    if (!photoReady.front || !photoReady.back || !form.frontImageUri || !form.backImageUri) {
+      Alert.alert('Two photos required', 'Add the meal-card front and cooking-guide back before reviewing the meal.');
+      return;
+    }
     if (!form.name.trim()) {
       Alert.alert('Meal name required', 'Enter the name shown on the prepared meal card.');
       return;
     }
     setBusy(true);
     try {
-      let imageUrl: string | null = null;
-      if (form.imageUri) {
-        if (dataMode === 'local' && form.imageBase64) {
-          imageUrl = `data:${form.imageMime ?? 'image/jpeg'};base64,${form.imageBase64}`;
-        } else {
-          imageUrl = await data.uploadImage(form.imageUri, form.imageMime, form.imageName);
-        }
-      }
+      const imageUrl = await savePhoto(form.frontImageUri, form.frontImageBase64, form.frontImageMime, form.frontImageName);
+      const cookingGuideImageUrl = await savePhoto(form.backImageUri, form.backImageBase64, form.backImageMime, form.backImageName);
       const input: MealInput = {
         name: form.name.trim(),
         description: clean(form.description),
         category: clean(form.category),
-        quantity: Math.max(1, parseInt(form.quantity, 10) || 1),
+        quantity: 1,
         caloriesPerServing: numberOrNull(form.calories),
         carbsPerServing: numberOrNull(form.carbs),
         proteinPerServing: numberOrNull(form.protein),
         fatPerServing: numberOrNull(form.fat),
         sodiumMgPerServing: numberOrNull(form.sodium),
         imageUrl,
-        source: form.imageUri ? 'PHOTO' : 'MANUAL'
+        cookingGuideImageUrl,
+        source: form.frontImageUri || form.backImageUri ? 'PHOTO' : 'MANUAL'
       };
       const saved = await data.addMeal(input);
       setForm(emptyForm);
+      setPhotoReady({ front: false, back: false });
+      setExtractionStatus('idle');
+      setExtractionError('');
       await refresh();
-      setNotice(`${saved.name} is in the freezer${saved.quantity > input.quantity ? ` (${saved.quantity} boxes total)` : ''}.`);
-      setTab('inventory');
+      Alert.alert('Meal added', `${saved.name} was added to your freezer. Add another meal?`, [
+        { text: 'Done', onPress: () => setTab('inventory') },
+        { text: 'Add another meal', onPress: () => setTab('add') }
+      ]);
     } catch (error) {
       showError(error);
     } finally {
@@ -275,8 +383,12 @@ export default function App() {
               form={form}
               setForm={setForm}
               busy={busy}
-              onCamera={() => void choosePhoto(true)}
-              onLibrary={() => void choosePhoto(false)}
+              photoReady={photoReady}
+              extractionStatus={extractionStatus}
+              extractionError={extractionError}
+              onAddPhoto={addPhoto}
+              onPhotoReady={side => setPhotoReady(current => ({ ...current, [side]: true }))}
+              onExtract={() => void extractMeal()}
               onSave={() => void saveMeal()}
             />
           )}
@@ -286,7 +398,13 @@ export default function App() {
         </KeyboardAvoidingView>
         <BottomNav tab={tab} setTab={setTab} />
       </View>
-      <PickModal result={picked} close={() => setPicked(null)} />
+      <PickModal
+        result={picked}
+        busy={busy}
+        close={() => setPicked(null)}
+        confirm={() => void confirmDinner()}
+        drawAgain={() => void drawAnotherDinner()}
+      />
       {busy && <View pointerEvents="none" style={styles.busyOverlay}><ActivityIndicator size="large" color={colors.accent} /></View>}
     </SafeAreaView>
   );
@@ -315,13 +433,13 @@ function HomeScreen({ dashboard, history, meals, busy, onDraw, onRelaxedDraw, sh
       <View style={styles.hero}>
         <Pill tone="orange">TONIGHT'S DINNER</Pill>
         <Text style={styles.heroTitle}>Let the freezer choose.</Text>
-        <Text style={styles.heroBody}>MealDeck skips anything you ate during the last seven days, then removes the selected box from inventory.</Text>
+        <Text style={styles.heroBody}>MealDeck skips anything you ate during the last seven days. Draw until one sounds good; inventory changes only when you choose it.</Text>
         <PrimaryButton label={busy ? 'Drawing…' : 'Draw a meal'} onPress={onDraw} disabled={busy || !dashboard?.totalBoxes} />
         {showRelaxed && <Pressable onPress={onRelaxedDraw} style={styles.relaxedButton}><Text style={styles.relaxedText}>Draw anyway without the 7-day rule</Text></Pressable>}
       </View>
 
       <View style={styles.statsRow}>
-        <Stat value={dashboard?.totalBoxes ?? 0} label="boxes" />
+        <Stat value={dashboard?.totalBoxes ?? 0} label="meals" />
         <Stat value={dashboard?.mealTypes ?? 0} label="meal types" />
         <Stat value={dashboard?.eligibleMealTypes ?? 0} label="eligible now" />
       </View>
@@ -337,7 +455,7 @@ function HomeScreen({ dashboard, history, meals, busy, onDraw, onRelaxedDraw, sh
             <Text style={styles.cardTitle}>{entry.mealName}</Text>
             <Text style={styles.cardMuted}>{formatDate(entry.consumedAt)}</Text>
           </View>
-          {entry.carbsPerServing != null && <Pill tone="mint">{entry.carbsPerServing * entry.servings}g box carbs</Pill>}
+          {entry.carbsPerServing != null && <Pill tone="mint">{entry.carbsPerServing}g carbs / serving</Pill>}
         </Card>
       )) : (
         <Card><Text style={styles.emptyTitle}>No dinner history yet</Text><Text style={styles.cardMuted}>Your first random draw will appear here.</Text></Card>
@@ -368,7 +486,7 @@ function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncremen
   return (
     <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <View style={styles.titleRow}>
-        <View><Text style={styles.pageTitle}>Freezer</Text><Text style={styles.pageSubtitle}>Each item is a two-person prepared meal.</Text></View>
+        <View><Text style={styles.pageTitle}>Freezer</Text><Text style={styles.pageSubtitle}>Prepared meals ready for two people.</Text></View>
         <Pressable onPress={onAdd} style={styles.addCircle}><Text style={styles.addCircleText}>＋</Text></Pressable>
       </View>
       <TextInput value={search} onChangeText={setSearch} placeholder="Search meals" placeholderTextColor="#92969B" style={styles.searchInput} />
@@ -402,64 +520,124 @@ function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncremen
           </View>
         </Card>
       )) : (
-        <Card><Text style={styles.emptyTitle}>No matching meals</Text><Text style={styles.cardMuted}>Add a box or clear the search.</Text></Card>
+        <Card><Text style={styles.emptyTitle}>No matching meals</Text><Text style={styles.cardMuted}>Add a meal or clear the search.</Text></Card>
       )}
     </ScrollView>
   );
 }
 
-function AddScreen({ form, setForm, busy, onCamera, onLibrary, onSave }: {
+function AddScreen({ form, setForm, busy, photoReady, extractionStatus, extractionError, onAddPhoto, onPhotoReady, onExtract, onSave }: {
   form: FormState; setForm: React.Dispatch<React.SetStateAction<FormState>>; busy: boolean;
-  onCamera: () => void; onLibrary: () => void; onSave: () => void;
+  photoReady: Record<PhotoSide, boolean>;
+  extractionStatus: 'idle' | 'reading' | 'ready' | 'error';
+  extractionError: string;
+  onAddPhoto: (side: PhotoSide) => void;
+  onPhotoReady: (side: PhotoSide) => void;
+  onExtract: () => void;
+  onSave: () => void;
 }) {
   const field = (key: keyof FormState, value: string) => setForm(current => ({ ...current, [key]: value }));
+  const captureStep = photoCaptureStep(photoReady.front, photoReady.back);
+  const photoError = () => Alert.alert('Photo could not be opened', 'Choose a different photo and try again.');
   return (
     <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <Text style={styles.pageTitle}>Add a meal</Text>
-      <Text style={styles.pageSubtitle}>Photograph the box or meal sheet, then verify the nutrition label.</Text>
+      <Text style={styles.pageSubtitle}>Add the meal-card front and cooking-guide back, then review the details.</Text>
 
       <Card style={styles.photoCard}>
-        {form.imageUri ? <Image source={{ uri: form.imageUri }} style={styles.photoPreview} resizeMode="cover" /> : (
-          <View style={styles.photoEmpty}><Text style={styles.photoEmoji}>📷</Text><Text style={styles.emptyTitle}>Meal-card photo</Text><Text style={styles.cardMuted}>The image stays with the inventory item.</Text></View>
+        <Text style={styles.photoSideTitle}>1. Meal card · front</Text>
+        <Text style={styles.cardMuted}>Meal overview, ingredients, and nutrition facts.</Text>
+        {form.frontImageUri ? <Image source={{ uri: form.frontImageUri }} style={styles.photoPreview} resizeMode="cover" onLoad={() => onPhotoReady('front')} onError={photoError} /> : (
+          <View style={styles.photoEmpty}><Text style={styles.photoEmoji}>📷</Text><Text style={styles.emptyTitle}>Add the front</Text></View>
         )}
-        <View style={styles.photoActions}>
-          <Pressable onPress={onCamera} style={styles.photoButton}><Text style={styles.photoButtonText}>Take photo</Text></Pressable>
-          <Pressable onPress={onLibrary} style={styles.photoButton}><Text style={styles.photoButtonText}>Choose photo</Text></Pressable>
-        </View>
-      </Card>
-
-      <Card>
-        <Field label="Meal name *" value={form.name} onChangeText={value => field('name', value)} placeholder="Chicken Tikka Masala" />
-        <Field label="Description" value={form.description} onChangeText={value => field('description', value)} placeholder="Chicken with basmati rice" multiline />
-        <View style={styles.twoColumns}>
-          <Field compact label="Category" value={form.category} onChangeText={value => field('category', value)} placeholder="Chicken" />
-          <Field compact label="Boxes" value={form.quantity} onChangeText={value => field('quantity', value)} placeholder="1" keyboardType="number-pad" />
-        </View>
-      </Card>
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Nutrition per serving</Text>
-        <Pill tone="mint">Always 2 servings</Pill>
-      </View>
-      <Card>
-        <View style={styles.twoColumns}>
-          <Field compact label="Carbs (g)" value={form.carbs} onChangeText={value => field('carbs', value)} keyboardType="number-pad" placeholder="42" />
-          <Field compact label="Calories" value={form.calories} onChangeText={value => field('calories', value)} keyboardType="number-pad" placeholder="510" />
-        </View>
-        <View style={styles.twoColumns}>
-          <Field compact label="Protein (g)" value={form.protein} onChangeText={value => field('protein', value)} keyboardType="number-pad" placeholder="31" />
-          <Field compact label="Fat (g)" value={form.fat} onChangeText={value => field('fat', value)} keyboardType="number-pad" placeholder="18" />
-        </View>
-        <Field label="Sodium (mg)" value={form.sodium} onChangeText={value => field('sodium', value)} keyboardType="number-pad" placeholder="850" />
-        {numberOrNull(form.carbs) != null && (
-          <View style={styles.carbCallout}>
-            <Text style={styles.carbLabel}>Whole box</Text>
-            <Text style={styles.carbTotal}>{numberOrNull(form.carbs)! * 2}g carbs</Text>
+        {form.frontImageUri ? (
+          <View style={styles.photoStatusRow}>
+            <Text style={[styles.photoStatus, photoReady.front && styles.photoStatusComplete]}>
+              {photoReady.front ? '✓ Front added' : 'Checking photo…'}
+            </Text>
+            <Pressable accessibilityRole="button" onPress={() => onAddPhoto('front')} hitSlop={8}>
+              <Text style={styles.retakeText}>Retake</Text>
+            </Pressable>
           </View>
+        ) : (
+          <PrimaryButton label="Add front photo" onPress={() => onAddPhoto('front')} />
+        )}
+        {captureStep !== 'front' && (
+          <>
+            <View style={styles.photoDivider} />
+            <Text style={styles.photoSideTitle}>2. Cooking guide · back</Text>
+            <Text style={styles.cardMuted}>Preparation steps and cooking instructions.</Text>
+            {form.backImageUri ? <Image source={{ uri: form.backImageUri }} style={styles.photoPreview} resizeMode="cover" onLoad={() => onPhotoReady('back')} onError={photoError} /> : (
+              <View style={styles.photoEmpty}><Text style={styles.photoEmoji}>📄</Text><Text style={styles.emptyTitle}>Add the back</Text></View>
+            )}
+            {form.backImageUri ? (
+              <View style={styles.photoStatusRow}>
+                <Text style={[styles.photoStatus, photoReady.back && styles.photoStatusComplete]}>
+                  {photoReady.back ? '✓ Back added' : 'Checking photo…'}
+                </Text>
+                <Pressable accessibilityRole="button" onPress={() => onAddPhoto('back')} hitSlop={8}>
+                  <Text style={styles.retakeText}>Retake</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <PrimaryButton label="Add back photo" onPress={() => onAddPhoto('back')} />
+            )}
+          </>
         )}
       </Card>
-      <PrimaryButton label={busy ? 'Saving…' : 'Add to freezer'} onPress={onSave} disabled={busy} />
-      <Text style={styles.formFootnote}>MVP note: the photo is captured now; automatic label-reading is planned for the next milestone, so nutrition is verified manually.</Text>
+
+      {captureStep === 'review' && extractionStatus === 'idle' && (
+        <PrimaryButton label="Read meal card" onPress={onExtract} />
+      )}
+
+      {captureStep === 'review' && extractionStatus === 'reading' && (
+        <Card style={styles.extractionState}>
+          <ActivityIndicator color={colors.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.emptyTitle}>Reading meal details…</Text>
+            <Text style={styles.cardMuted}>Finding the meal overview and per-serving nutrition.</Text>
+          </View>
+        </Card>
+      )}
+
+      {captureStep === 'review' && extractionStatus === 'error' && (
+        <Card>
+          <Text style={styles.emptyTitle}>Photos need another look</Text>
+          <Text style={styles.cardMuted}>{extractionError}</Text>
+          <Text style={styles.cardMuted}>Retake a photo if it is unclear, or try reading the meal card again.</Text>
+          <PrimaryButton label="Try reading again" onPress={onExtract} />
+        </Card>
+      )}
+
+      {captureStep === 'review' && extractionStatus === 'ready' && (
+        <>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>3. Review meal details</Text>
+          </View>
+          <Card>
+            <Field label="Meal name *" value={form.name} onChangeText={value => field('name', value)} placeholder="Chicken Tikka Masala" />
+            <Field label="Description" value={form.description} onChangeText={value => field('description', value)} placeholder="Chicken with basmati rice" multiline />
+            <Field label="Category" value={form.category} onChangeText={value => field('category', value)} placeholder="Chicken" />
+          </Card>
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Nutrition per serving</Text>
+          </View>
+          <Card>
+            <View style={styles.twoColumns}>
+              <Field compact label="Carbs (g)" value={form.carbs} onChangeText={value => field('carbs', value)} keyboardType="number-pad" placeholder="42" />
+              <Field compact label="Calories" value={form.calories} onChangeText={value => field('calories', value)} keyboardType="number-pad" placeholder="510" />
+            </View>
+            <View style={styles.twoColumns}>
+              <Field compact label="Protein (g)" value={form.protein} onChangeText={value => field('protein', value)} keyboardType="number-pad" placeholder="31" />
+              <Field compact label="Fat (g)" value={form.fat} onChangeText={value => field('fat', value)} keyboardType="number-pad" placeholder="18" />
+            </View>
+            <Field label="Sodium (mg)" value={form.sodium} onChangeText={value => field('sodium', value)} keyboardType="number-pad" placeholder="850" />
+          </Card>
+          <PrimaryButton label={busy ? 'Adding…' : 'Add meal'} onPress={onSave} disabled={busy} />
+          <Text style={styles.formFootnote}>Review the extracted details before adding this meal. You can correct anything the photos did not capture clearly.</Text>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -480,7 +658,7 @@ function HistoryScreen({ history, busy, undo, refreshing, refresh }: {
           <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>{entry.mealName}</Text>
             <Text style={styles.cardMuted}>{formatDate(entry.consumedAt)}</Text>
-            {entry.carbsPerServing != null && <Text style={styles.historyNutrition}>{entry.carbsPerServing}g carbs per serving · {entry.carbsPerServing * entry.servings}g per box</Text>}
+            {entry.carbsPerServing != null && <Text style={styles.historyNutrition}>{entry.carbsPerServing}g carbs per serving</Text>}
           </View>
           <Pressable disabled={busy} onPress={() => undo(entry)} style={styles.undoButton}><Text style={styles.undoText}>Undo</Text></Pressable>
         </Card>
@@ -491,24 +669,40 @@ function HistoryScreen({ history, busy, undo, refreshing, refresh }: {
   );
 }
 
-function PickModal({ result, close }: { result: PickResult | null; close: () => void }) {
+function PickModal({ result, busy, close, confirm, drawAgain }: {
+  result: Meal | null;
+  busy: boolean;
+  close: () => void;
+  confirm: () => void;
+  drawAgain: () => void;
+}) {
   if (!result) return null;
-  const carbs = result.meal.carbsPerServing;
+  const carbs = result.carbsPerServing;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={close}>
       <View style={styles.modalBackdrop}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalEyebrow}>DINNER IS DECIDED</Text>
-          <MealImage meal={result.meal} large />
-          <Text style={styles.modalTitle}>{result.meal.name}</Text>
-          {result.meal.description ? <Text style={styles.modalBody}>{result.meal.description}</Text> : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close dinner result"
+            hitSlop={8}
+            onPress={close}
+            style={styles.modalClose}
+          >
+            <Text style={styles.modalCloseText}>×</Text>
+          </Pressable>
+          <Text style={styles.modalEyebrow}>HOW ABOUT THIS?</Text>
+          <MealImage meal={result} large />
+          <Text style={styles.modalTitle}>{result.name}</Text>
+          {result.description ? <Text style={styles.modalBody}>{result.description}</Text> : null}
           <View style={styles.modalPills}>
             <Pill tone="mint">2 servings</Pill>
-            {carbs != null && <Pill tone="orange">{carbs * 2}g carbs per box</Pill>}
+            {carbs != null && <Pill tone="orange">{carbs}g carbs / serving</Pill>}
           </View>
-          <NutritionRow meal={result.meal} />
-          <View style={styles.inventoryMessage}><Text style={styles.inventoryMessageText}>✓ One box was removed. {result.meal.quantity} remaining.</Text></View>
-          <PrimaryButton label="Great — let's eat" onPress={close} />
+          <NutritionRow meal={result} />
+          <PrimaryButton label={busy ? 'Choosing…' : 'Choose this meal'} onPress={confirm} disabled={busy} />
+          <PrimaryButton label={busy ? 'Drawing…' : 'Draw another meal'} onPress={drawAgain} disabled={busy} secondary />
+          <Text style={styles.drawAgainNote}>Inventory changes only after you choose a meal.</Text>
         </View>
       </View>
     </Modal>
@@ -549,12 +743,19 @@ function toInput(meal: Meal, quantity: number): MealInput {
     name: meal.name, description: meal.description ?? undefined, category: meal.category ?? undefined, quantity,
     caloriesPerServing: meal.caloriesPerServing, carbsPerServing: meal.carbsPerServing,
     proteinPerServing: meal.proteinPerServing, fatPerServing: meal.fatPerServing,
-    sodiumMgPerServing: meal.sodiumMgPerServing, imageUrl: meal.imageUrl, source: meal.source ?? undefined
+    sodiumMgPerServing: meal.sodiumMgPerServing, imageUrl: meal.imageUrl,
+    cookingGuideImageUrl: meal.cookingGuideImageUrl, source: meal.source ?? undefined
   };
 }
 
 function clean(value: string) { return value.trim() || undefined; }
 function numberOrNull(value: string) { const parsed = Number(value); return value.trim() && Number.isFinite(parsed) ? Math.round(parsed) : null; }
+function valueText(value?: number | null) { return value == null ? '' : String(value); }
+async function savePhoto(uri: string, base64?: string, mime?: string, name?: string): Promise<string | null> {
+  if (!uri) return null;
+  if (dataMode === 'local' && base64) return `data:${mime ?? 'image/jpeg'};base64,${base64}`;
+  return data.uploadImage(uri, mime, name);
+}
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong'; }
 function showError(error: unknown) { Alert.alert('MealDeck', errorMessage(error)); }
 function formatDate(value: string) { return new Date(value).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
@@ -607,14 +808,19 @@ const styles = StyleSheet.create({
   stepperText: { color: colors.brand, fontSize: 18, fontWeight: '800' }, stepperValue: { minWidth: 27, textAlign: 'center', color: colors.ink, fontWeight: '800' },
   smallAction: { backgroundColor: colors.brandSoft, borderRadius: 11, paddingHorizontal: 12, height: 36, justifyContent: 'center' }, smallActionText: { color: colors.brand, fontSize: 12, fontWeight: '800' },
   deleteAction: { marginLeft: 'auto', padding: 8 }, deleteText: { color: colors.danger, fontSize: 12, fontWeight: '700' }, disabled: { opacity: 0.4 },
-  photoCard: { gap: 12 }, photoPreview: { width: '100%', height: 230, borderRadius: 17 },
-  photoEmpty: { height: 190, backgroundColor: colors.background, borderRadius: 17, alignItems: 'center', justifyContent: 'center', gap: 5, borderStyle: 'dashed', borderWidth: 1, borderColor: '#CBCAC1' },
-  photoEmoji: { fontSize: 38 }, photoActions: { flexDirection: 'row', gap: 10 }, photoButton: { flex: 1, minHeight: 44, backgroundColor: colors.brandSoft, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }, photoButtonText: { color: colors.brand, fontWeight: '800' },
+  photoCard: { gap: 12 }, photoSideTitle: { color: colors.ink, fontSize: 16, fontWeight: '800' },
+  photoPreview: { width: '100%', height: 210, borderRadius: 15 },
+  photoEmpty: { height: 150, backgroundColor: colors.background, borderRadius: 15, alignItems: 'center', justifyContent: 'center', gap: 5, borderStyle: 'dashed', borderWidth: 1, borderColor: '#CBCAC1' },
+  photoDivider: { height: 1, backgroundColor: colors.line, marginVertical: 6 },
+  photoEmoji: { fontSize: 38 },
+  photoStatusRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4 },
+  photoStatus: { color: colors.muted, fontSize: 14, fontWeight: '700' },
+  photoStatusComplete: { color: colors.mintInk },
+  retakeText: { color: colors.brand, fontSize: 13, fontWeight: '800', padding: 8 },
+  extractionState: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   field: { marginBottom: 13 }, fieldCompact: { flex: 1 }, fieldLabel: { color: colors.ink, fontSize: 12, fontWeight: '800', marginBottom: 6 },
   input: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.line, borderRadius: 12, minHeight: 45, paddingHorizontal: 12, color: colors.ink, fontSize: 15 },
   inputMultiline: { minHeight: 76, paddingTop: 11, textAlignVertical: 'top' }, twoColumns: { flexDirection: 'row', gap: 12 },
-  carbCallout: { backgroundColor: colors.mint, borderRadius: 13, padding: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  carbLabel: { color: colors.mintInk, fontSize: 13, fontWeight: '700' }, carbTotal: { color: colors.mintInk, fontSize: 18, fontWeight: '900' },
   formFootnote: { color: colors.muted, fontSize: 11, lineHeight: 16, textAlign: 'center', paddingHorizontal: 12 },
   historyCard: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   calendarBadge: { width: 48, height: 52, borderRadius: 13, backgroundColor: colors.brandSoft, alignItems: 'center', justifyContent: 'center' },
@@ -625,10 +831,12 @@ const styles = StyleSheet.create({
   navIconActive: { backgroundColor: colors.brandSoft }, navIcon: { color: colors.muted, fontSize: 19, fontWeight: '700' }, navIconTextActive: { color: colors.brand },
   navLabel: { color: colors.muted, fontSize: 10, fontWeight: '700' }, navLabelActive: { color: colors.brand },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(18,20,26,0.72)', justifyContent: 'center', padding: 18 },
-  modalCard: { width: '100%', maxWidth: 540, alignSelf: 'center', backgroundColor: colors.surface, borderRadius: 28, padding: 18, gap: 13 },
+  modalCard: { width: '100%', maxWidth: 540, alignSelf: 'center', backgroundColor: colors.surface, borderRadius: 16, padding: 18, gap: 13 },
+  modalClose: { width: 44, height: 44, marginRight: -8, marginBottom: -10, alignSelf: 'flex-end', alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.background },
+  modalCloseText: { color: colors.ink, fontSize: 26, lineHeight: 28, fontWeight: '500' },
   modalEyebrow: { color: colors.accent, fontSize: 11, letterSpacing: 1.6, fontWeight: '900', textAlign: 'center' },
   modalTitle: { color: colors.ink, fontSize: 29, lineHeight: 33, fontWeight: '900', textAlign: 'center' }, modalBody: { color: colors.muted, fontSize: 14, textAlign: 'center' },
   modalPills: { flexDirection: 'row', gap: 8, justifyContent: 'center', flexWrap: 'wrap' },
-  inventoryMessage: { backgroundColor: colors.mint, padding: 11, borderRadius: 12 }, inventoryMessageText: { color: colors.mintInk, fontSize: 12, textAlign: 'center', fontWeight: '700' },
+  drawAgainNote: { color: colors.muted, fontSize: 11, lineHeight: 16, textAlign: 'center', paddingHorizontal: 12 },
   busyOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(247,247,242,0.35)', alignItems: 'center', justifyContent: 'center' }
 });

@@ -115,7 +115,7 @@ export const localStore = {
     });
   },
 
-  async pickRandom(avoidDays = 7, allowRecent = false): Promise<PickResult> {
+  async previewRandom(avoidDays = 7, allowRecent = false, excludeMealId?: string): Promise<Meal> {
     return serialized(async () => {
       const state = await readState();
       const cutoff = Date.now() - avoidDays * 24 * 60 * 60 * 1000;
@@ -124,10 +124,10 @@ export const localStore = {
       if (!available.length) throw new Error('Your freezer inventory is empty.');
       const eligible = available.filter(meal => allowRecent || !recent.has(normalize(meal.name)));
       if (!eligible.length) throw new Error(`Every available meal was eaten in the last ${avoidDays} days. Try the relaxed draw.`);
-      const selected = eligible[Math.floor(Math.random() * eligible.length)];
-      const result = consumeState(state, selected.id, avoidDays);
-      await writeState(state);
-      return result;
+      const choices = eligible.length > 1 && excludeMealId
+        ? eligible.filter(meal => meal.id !== excludeMealId)
+        : eligible;
+      return choices[Math.floor(Math.random() * choices.length)];
     });
   },
 

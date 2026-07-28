@@ -7,6 +7,7 @@ services:
       - mealdeck-data:/app/data
     environment:
       MEALDECK_UPLOAD_DIR: /app/data/uploads
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
 
 volumes:
   mealdeck-data:

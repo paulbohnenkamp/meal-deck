@@ -40,7 +40,8 @@
           "photosPermission": "Allow MealDeck to access meal photos.",
           "cameraPermission": "Allow MealDeck to photograph meal cards."
         }
-      ]
+      ],
+      "expo-status-bar"
     ]
   }
 }

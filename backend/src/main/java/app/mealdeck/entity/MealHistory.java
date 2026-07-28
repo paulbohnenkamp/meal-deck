@@ -1,4 +1,4 @@
-package app.mealdeck.history;
+package app.mealdeck.entity;
 
 import java.time.Instant;
 import java.util.UUID;

@@ -9,36 +9,45 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
-import app.mealdeck.api.MealDtos.DashboardResponse;
-import app.mealdeck.api.MealDtos.HistoryResponse;
-import app.mealdeck.api.MealDtos.MealRequest;
-import app.mealdeck.api.MealDtos.MealResponse;
-import app.mealdeck.api.MealDtos.PickResponse;
-import app.mealdeck.history.MealHistory;
-import app.mealdeck.history.MealHistoryRepository;
-import app.mealdeck.meal.Meal;
-import app.mealdeck.meal.MealRepository;
+import app.mealdeck.dto.DashboardResponse;
+import app.mealdeck.dto.HistoryResponse;
+import app.mealdeck.dto.MealRequest;
+import app.mealdeck.dto.MealResponse;
+import app.mealdeck.dto.PickResponse;
+import app.mealdeck.entity.Meal;
+import app.mealdeck.entity.MealHistory;
+import app.mealdeck.exception.DuplicateMealNameException;
+import app.mealdeck.exception.HistoryNotFoundException;
+import app.mealdeck.exception.InventoryConflictException;
+import app.mealdeck.exception.MealNotFoundException;
+import app.mealdeck.mapper.HistoryMapper;
+import app.mealdeck.mapper.MealMapper;
+import app.mealdeck.repository.MealHistoryRepository;
+import app.mealdeck.repository.MealRepository;
 
 @Service
 public class MealDeckService {
     private final MealRepository meals;
     private final MealHistoryRepository history;
+    private final MealMapper mealMapper;
+    private final HistoryMapper historyMapper;
 
-    public MealDeckService(MealRepository meals, MealHistoryRepository history) {
+    public MealDeckService(MealRepository meals, MealHistoryRepository history,
+                           MealMapper mealMapper, HistoryMapper historyMapper) {
         this.meals = meals;
         this.history = history;
+        this.mealMapper = mealMapper;
+        this.historyMapper = historyMapper;
     }
 
     @Transactional(readOnly = true)
     public List<MealResponse> listMeals() {
         return meals.findAll().stream()
                 .sorted(Comparator.comparing(Meal::getName, String.CASE_INSENSITIVE_ORDER))
-                .map(MealResponse::from).toList();
+                .map(mealMapper::toResponse).toList();
     }
 
     @Transactional
@@ -57,8 +66,9 @@ public class MealDeckService {
         meal.setFatPerServing(request.fatPerServing());
         meal.setSodiumMgPerServing(request.sodiumMgPerServing());
         meal.setImageUrl(request.imageUrl());
+        meal.setCookingGuideImageUrl(request.cookingGuideImageUrl());
         meal.setSource(request.source());
-        return MealResponse.from(meals.save(meal));
+        return mealMapper.toResponse(meals.save(meal));
     }
 
     @Transactional
@@ -74,24 +84,31 @@ public class MealDeckService {
         meal.setFatPerServing(request.fatPerServing());
         meal.setSodiumMgPerServing(request.sodiumMgPerServing());
         meal.setImageUrl(request.imageUrl());
+        meal.setCookingGuideImageUrl(request.cookingGuideImageUrl());
         meal.setSource(request.source());
         try {
-            return MealResponse.from(meals.saveAndFlush(meal));
+            return mealMapper.toResponse(meals.saveAndFlush(meal));
         } catch (RuntimeException ex) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Another meal already uses that name", ex);
+            throw new DuplicateMealNameException(ex);
         }
     }
 
     @Transactional
     public void deleteMeal(UUID id) {
-        if (!meals.existsById(id)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Meal not found");
+        if (!meals.existsById(id)) throw new MealNotFoundException(id);
         meals.deleteById(id);
     }
 
     @Transactional
     public PickResponse pickRandom(int avoidDays, boolean allowRecent) {
+        MealResponse preview = previewRandom(avoidDays, allowRecent, null);
+        return consume(preview.id(), avoidDays);
+    }
+
+    @Transactional(readOnly = true)
+    public MealResponse previewRandom(int avoidDays, boolean allowRecent, UUID excludeMealId) {
         List<Meal> available = meals.findByQuantityGreaterThanOrderByNameAsc(0);
-        if (available.isEmpty()) throw new ResponseStatusException(HttpStatus.CONFLICT, "Your freezer inventory is empty");
+        if (available.isEmpty()) throw new InventoryConflictException("Your freezer inventory is empty");
 
         Set<String> recentlyEaten = recentNames(avoidDays);
         List<Meal> eligible = available.stream()
@@ -99,12 +116,15 @@ public class MealDeckService {
                 .toList();
 
         if (eligible.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
+            throw new InventoryConflictException(
                     "Every available meal was eaten in the last " + avoidDays + " days. Try the relaxed draw.");
         }
 
-        Meal selected = eligible.get(ThreadLocalRandom.current().nextInt(eligible.size()));
-        return consume(selected, avoidDays);
+        List<Meal> choices = eligible.size() > 1 && excludeMealId != null
+                ? eligible.stream().filter(meal -> !meal.getId().equals(excludeMealId)).toList()
+                : eligible;
+        Meal selected = choices.get(ThreadLocalRandom.current().nextInt(choices.size()));
+        return mealMapper.toResponse(selected);
     }
 
     @Transactional
@@ -113,7 +133,7 @@ public class MealDeckService {
     }
 
     private PickResponse consume(Meal meal, int avoidDays) {
-        if (meal.getQuantity() <= 0) throw new ResponseStatusException(HttpStatus.CONFLICT, "That meal is out of stock");
+        if (meal.getQuantity() <= 0) throw new InventoryConflictException("That meal is out of stock");
         meal.setQuantity(meal.getQuantity() - 1);
         meals.save(meal);
 
@@ -124,18 +144,18 @@ public class MealDeckService {
         entry.setCarbsPerServingSnapshot(meal.getCarbsPerServing());
         entry.setServingsSnapshot(meal.getServings());
         history.save(entry);
-        return new PickResponse(MealResponse.from(meal), HistoryResponse.from(entry), avoidDays);
+        return new PickResponse(mealMapper.toResponse(meal), historyMapper.toResponse(entry), avoidDays);
     }
 
     @Transactional(readOnly = true)
     public List<HistoryResponse> listHistory() {
-        return history.findAllByOrderByConsumedAtDesc().stream().map(HistoryResponse::from).toList();
+        return history.findAllByOrderByConsumedAtDesc().stream().map(historyMapper::toResponse).toList();
     }
 
     @Transactional
     public MealResponse undoHistory(UUID historyId) {
         MealHistory entry = history.findById(historyId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "History entry not found"));
+                .orElseThrow(() -> new HistoryNotFoundException(historyId));
         Meal meal = entry.getMealId() == null ? null : meals.findById(entry.getMealId()).orElse(null);
         if (meal == null) meal = meals.findByNormalizedName(entry.getNormalizedMealName()).orElse(null);
         if (meal == null) {
@@ -149,7 +169,7 @@ public class MealDeckService {
         meal.setQuantity(meal.getQuantity() + 1);
         Meal saved = meals.save(meal);
         history.delete(entry);
-        return MealResponse.from(saved);
+        return mealMapper.toResponse(saved);
     }
 
     @Transactional(readOnly = true)
@@ -168,7 +188,7 @@ public class MealDeckService {
     }
 
     private Meal getMeal(UUID id) {
-        return meals.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meal not found"));
+        return meals.findById(id).orElseThrow(() -> new MealNotFoundException(id));
     }
 
     private int valueOr(Integer value, int fallback) { return value == null ? fallback : value; }
