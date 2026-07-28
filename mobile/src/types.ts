@@ -11,6 +11,7 @@ export type Meal = {
   fatPerServing?: number | null;
   sodiumMgPerServing?: number | null;
   imageUrl?: string | null;
+  cookingGuideImageUrl?: string | null;
   source?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -27,7 +28,19 @@ export type MealInput = {
   fatPerServing?: number | null;
   sodiumMgPerServing?: number | null;
   imageUrl?: string | null;
+  cookingGuideImageUrl?: string | null;
   source?: string;
+};
+
+export type MealExtraction = {
+  name?: string | null;
+  description?: string | null;
+  category?: string | null;
+  caloriesPerServing?: number | null;
+  carbsPerServing?: number | null;
+  proteinPerServing?: number | null;
+  fatPerServing?: number | null;
+  sodiumMgPerServing?: number | null;
 };
 
 export type HistoryEntry = {

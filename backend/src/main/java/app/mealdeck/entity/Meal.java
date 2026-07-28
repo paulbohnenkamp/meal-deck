@@ -1,4 +1,4 @@
-package app.mealdeck.meal;
+package app.mealdeck.entity;
 
 import java.time.Instant;
 import java.util.Locale;
@@ -38,6 +38,7 @@ public class Meal {
     private Integer fatPerServing;
     private Integer sodiumMgPerServing;
     private String imageUrl;
+    private String cookingGuideImageUrl;
     private String source;
 
     @Column(nullable = false)
@@ -95,6 +96,8 @@ public class Meal {
     public void setSodiumMgPerServing(Integer sodiumMgPerServing) { this.sodiumMgPerServing = sodiumMgPerServing; }
     public String getImageUrl() { return imageUrl; }
     public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
+    public String getCookingGuideImageUrl() { return cookingGuideImageUrl; }
+    public void setCookingGuideImageUrl(String cookingGuideImageUrl) { this.cookingGuideImageUrl = cookingGuideImageUrl; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
     public Instant getCreatedAt() { return createdAt; }

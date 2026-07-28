@@ -1,4 +1,4 @@
-package app.mealdeck.api;
+package app.mealdeck.controller;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
-import app.mealdeck.api.MealDtos.UploadResponse;
+import app.mealdeck.dto.UploadResponse;
 
 @RestController
 @RequestMapping("/api/uploads")

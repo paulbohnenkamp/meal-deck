@@ -1,4 +1,4 @@
-package app.mealdeck.api;
+package app.mealdeck.controller;
 
 import java.util.List;
 import java.util.UUID;
@@ -15,11 +15,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import app.mealdeck.api.MealDtos.DashboardResponse;
-import app.mealdeck.api.MealDtos.HistoryResponse;
-import app.mealdeck.api.MealDtos.MealRequest;
-import app.mealdeck.api.MealDtos.MealResponse;
-import app.mealdeck.api.MealDtos.PickResponse;
+import app.mealdeck.dto.DashboardResponse;
+import app.mealdeck.dto.HistoryResponse;
+import app.mealdeck.dto.MealRequest;
+import app.mealdeck.dto.MealResponse;
+import app.mealdeck.dto.PickResponse;
 import app.mealdeck.service.MealDeckService;
 import jakarta.validation.Valid;
 
@@ -55,6 +55,13 @@ public class MealDeckController {
     public PickResponse random(@RequestParam(defaultValue = "7") int avoidDays,
                                @RequestParam(defaultValue = "false") boolean allowRecent) {
         return service.pickRandom(avoidDays, allowRecent);
+    }
+
+    @PostMapping("/picks/preview")
+    public MealResponse preview(@RequestParam(defaultValue = "7") int avoidDays,
+                                @RequestParam(defaultValue = "false") boolean allowRecent,
+                                @RequestParam(required = false) UUID excludeMealId) {
+        return service.previewRandom(avoidDays, allowRecent, excludeMealId);
     }
 
     @GetMapping("/history")

@@ -4,8 +4,8 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import app.mealdeck.meal.Meal;
-import app.mealdeck.meal.MealRepository;
+import app.mealdeck.entity.Meal;
+import app.mealdeck.repository.MealRepository;
 
 @Configuration
 public class SeedData {

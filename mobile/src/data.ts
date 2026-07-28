@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
+import { File } from 'expo-file-system';
 import { localStore } from './localStore';
-import { Dashboard, HistoryEntry, Meal, MealInput, PickResult } from './types';
+import { Dashboard, HistoryEntry, Meal, MealExtraction, MealInput, PickResult } from './types';
 
 const apiBase = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 export const dataMode = apiBase ? 'server' : 'local';
@@ -23,6 +24,22 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function appendPhoto(
+  form: FormData,
+  field: string,
+  uri: string,
+  mimeType: string,
+  fileName: string
+) {
+  if (Platform.OS === 'web') {
+    const blob = await (await fetch(uri)).blob();
+    form.append(field, blob.slice(0, blob.size, mimeType), fileName);
+    return;
+  }
+  const file = new File(uri);
+  form.append(field, file, fileName);
+}
+
 export const data = {
   listMeals: (): Promise<Meal[]> => apiBase ? request('/api/meals') : localStore.listMeals(),
   addMeal: (input: MealInput): Promise<Meal> => apiBase
@@ -34,9 +51,12 @@ export const data = {
   deleteMeal: (id: string): Promise<void> => apiBase
     ? request(`/api/meals/${id}`, { method: 'DELETE' })
     : localStore.deleteMeal(id),
-  pickRandom: (avoidDays = 7, allowRecent = false): Promise<PickResult> => apiBase
-    ? request(`/api/picks/random?avoidDays=${avoidDays}&allowRecent=${allowRecent}`, { method: 'POST' })
-    : localStore.pickRandom(avoidDays, allowRecent),
+  previewRandom: (avoidDays = 7, allowRecent = false, excludeMealId?: string): Promise<Meal> => {
+    const exclude = excludeMealId ? `&excludeMealId=${encodeURIComponent(excludeMealId)}` : '';
+    return apiBase
+      ? request(`/api/picks/preview?avoidDays=${avoidDays}&allowRecent=${allowRecent}${exclude}`, { method: 'POST' })
+      : localStore.previewRandom(avoidDays, allowRecent, excludeMealId);
+  },
   consume: (id: string, avoidDays = 7): Promise<PickResult> => apiBase
     ? request(`/api/meals/${id}/consume?avoidDays=${avoidDays}`, { method: 'POST' })
     : localStore.consume(id, avoidDays),
@@ -47,15 +67,26 @@ export const data = {
   dashboard: (avoidDays = 7): Promise<Dashboard> => apiBase
     ? request(`/api/dashboard?avoidDays=${avoidDays}`)
     : localStore.dashboard(avoidDays),
+  async extractMeal(frontUri: string, backUri: string, frontMime = 'image/jpeg', backMime = 'image/jpeg'): Promise<MealExtraction> {
+    if (!apiBase) throw new Error('Automatic photo reading requires the MealDeck backend.');
+    const form = new FormData();
+    await appendPhoto(form, 'front', frontUri, frontMime, 'front-meal-card.jpg');
+    await appendPhoto(form, 'back', backUri, backMime, 'back-cooking-guide.jpg');
+    const response = await fetch(`${apiBase}/api/extractions`, { method: 'POST', body: form });
+    if (!response.ok) {
+      let message = 'The meal photos could not be read.';
+      try {
+        const body = await response.json() as { detail?: string; message?: string };
+        message = body.detail || body.message || message;
+      } catch { /* ignore non-JSON error */ }
+      throw new Error(message);
+    }
+    return response.json() as Promise<MealExtraction>;
+  },
   async uploadImage(uri: string, mimeType = 'image/jpeg', fileName = 'meal.jpg'): Promise<string> {
     if (!apiBase) return uri;
     const form = new FormData();
-    if (Platform.OS === 'web') {
-      const blob = await (await fetch(uri)).blob();
-      form.append('file', blob, fileName);
-    } else {
-      form.append('file', { uri, type: mimeType, name: fileName } as unknown as Blob);
-    }
+    await appendPhoto(form, 'file', uri, mimeType, fileName);
     const response = await fetch(`${apiBase}/api/uploads`, { method: 'POST', body: form });
     if (!response.ok) throw new Error('Could not upload the meal photo');
     const body = await response.json() as { imageUrl: string };

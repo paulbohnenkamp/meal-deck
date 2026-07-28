@@ -17,3 +17,6 @@ server:
   port: ${PORT:8080}
 mealdeck:
   upload-dir: ${MEALDECK_UPLOAD_DIR:./data/uploads}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-5.6-sol}

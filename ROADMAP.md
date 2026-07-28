@@ -12,22 +12,37 @@
 
 ## Milestone 2 — Photo-to-meal extraction
 
-- Upload box-front and nutrition-sheet photos as a capture set
-- Backend image preprocessing and orientation correction
-- OCR/vision provider abstraction
-- Structured extraction for name, description, servings, calories, carbs, protein, fat, and sodium
-- Confidence score per field
-- Mandatory review screen before inventory mutation
-- Retain original extraction evidence for correction and debugging
-- Never expose provider credentials to the client
+### Working slice completed
 
-Suggested contract:
+- [x] Guided meal-card front and cooking-guide back capture
+- [x] Explicit “Read meal card” consent before photos are uploaded
+- [x] Backend-only OpenAI vision integration with structured extraction
+- [x] Extract name, description, category, calories, carbs, protein, fat, and sodium
+- [x] Keep nutrition values per serving
+- [x] Mandatory editable review before inventory mutation
+- [x] Store both photos with the confirmed meal
+- [x] Keep provider credentials out of the Expo client
+- [x] Preserve local inventory and dinner-selection behavior when no API is configured
+
+### Remaining production hardening
+
+- [ ] Make extraction an asynchronous job with polling and retry-safe IDs
+- [ ] Add backend image preprocessing and orientation correction
+- [ ] Add confidence and source evidence per extracted field
+- [ ] Retain extraction evidence for correction, debugging, and evaluation
+- [ ] Build a representative meal-card evaluation set
+- [ ] Add provider timeouts, retry policy, rate limits, and cost telemetry
+- [ ] Add a production fallback when extraction is unavailable
+
+Target asynchronous contract:
 
 ```text
 POST /api/extractions
 GET  /api/extractions/{id}
 POST /api/extractions/{id}/confirm
 ```
+
+The current MVP uses a synchronous `POST /api/extractions` endpoint and saves inventory only through the existing confirmed meal endpoint.
 
 ## Milestone 3 — Household sync
 
