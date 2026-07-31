@@ -19,18 +19,43 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as Device from 'expo-device';
 import { StatusBar } from 'expo-status-bar';
-import { Card, MealImage, NutritionRow, Pill, PrimaryButton } from './src/components';
+import {
+  Card,
+  CookingCode,
+  MachineIdentifiers,
+  MealImage,
+  NutritionRow,
+  Pill,
+  PrimaryButton
+} from './src/components';
 import { data, dataMode } from './src/data';
-import { photoCaptureStep, photoFormPatch, PhotoSide } from './src/photoFlow';
+import {
+  cookingCodeReview,
+  photoCaptureStep,
+  photoFormPatch,
+  PhotoSide,
+  SelectedPhoto
+} from './src/photoFlow';
 import { colors } from './src/theme';
-import { Dashboard, HistoryEntry, Meal, MealInput } from './src/types';
+import { Dashboard, HistoryEntry, Meal, MealInput, PackingSlipManifest } from './src/types';
 
+/** Top-level screen available from the persistent bottom navigation. */
 type Tab = 'home' | 'inventory' | 'add' | 'history';
 
+/** Editable meal form, including both temporary captured-photo representations. */
 type FormState = {
   name: string;
   description: string;
   category: string;
+  cookingMealCode: string;
+  frontCookingMealCode: string;
+  backCookingMealCode: string;
+  frontBarcodePayload: string;
+  backQrPayload: string;
+  machineIdentifiersReviewed: boolean;
+  reusedTemplate: boolean;
+  templateImageUrl: string;
+  templateCookingGuideImageUrl: string;
   calories: string;
   carbs: string;
   protein: string;
@@ -47,10 +72,14 @@ type FormState = {
 };
 
 const emptyForm: FormState = {
-  name: '', description: '', category: '', calories: '', carbs: '',
-  protein: '', fat: '', sodium: '', frontImageUri: '', backImageUri: ''
+  name: '', description: '', category: '', cookingMealCode: '',
+  frontCookingMealCode: '', backCookingMealCode: '', frontBarcodePayload: '',
+  backQrPayload: '', machineIdentifiersReviewed: true, calories: '', carbs: '',
+  protein: '', fat: '', sodium: '', frontImageUri: '', backImageUri: '',
+  reusedTemplate: false, templateImageUrl: '', templateCookingGuideImageUrl: ''
 };
 
+/** Coordinates application state, persistence operations, and screen navigation. */
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [meals, setMeals] = useState<Meal[]>([]);
@@ -67,6 +96,11 @@ export default function App() {
   const [extractionError, setExtractionError] = useState('');
   const [form, setForm] = useState<FormState>(emptyForm);
   const [search, setSearch] = useState('');
+  const [templateIdentifier, setTemplateIdentifier] = useState('');
+  const [packingSlip, setPackingSlip] = useState<SelectedPhoto | null>(null);
+  const [packingManifest, setPackingManifest] = useState<PackingSlipManifest | null>(null);
+  const [packingBusy, setPackingBusy] = useState(false);
+  const [shipmentBusy, setShipmentBusy] = useState(false);
 
   const refresh = useCallback(async (manual = false) => {
     manual ? setRefreshing(true) : setLoading(true);
@@ -101,11 +135,23 @@ export default function App() {
         form.frontImageMime,
         form.backImageMime
       );
+      const cookingCode = cookingCodeReview(
+        extraction.frontCookingMealCode,
+        extraction.backCookingMealCode,
+        extraction.cookingMealCode
+      );
       setForm(current => ({
         ...current,
         name: extraction.name ?? '',
         description: extraction.description ?? '',
         category: extraction.category ?? '',
+        cookingMealCode: cookingCode.cookingMealCode,
+        frontCookingMealCode: cookingCode.frontCookingMealCode,
+        backCookingMealCode: cookingCode.backCookingMealCode,
+        frontBarcodePayload: extraction.frontBarcodePayload ?? '',
+        backQrPayload: extraction.backQrPayload ?? '',
+        machineIdentifiersReviewed:
+          !extraction.frontBarcodePayload && !extraction.backQrPayload,
         calories: valueText(extraction.caloriesPerServing),
         carbs: valueText(extraction.carbsPerServing),
         protein: valueText(extraction.proteinPerServing),
@@ -119,10 +165,157 @@ export default function App() {
     }
   }
 
+  async function reuseTemplate() {
+    if (!templateIdentifier.trim()) {
+      Alert.alert('Identifier required', 'Enter a cooking code, barcode, or QR payload.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const template = await data.lookupTemplate(templateIdentifier);
+      setForm({
+        ...emptyForm,
+        name: template.name,
+        description: template.description ?? '',
+        category: template.category ?? '',
+        cookingMealCode: template.cookingMealCode ?? '',
+        frontBarcodePayload: template.frontBarcodePayload ?? '',
+        backQrPayload: template.backQrPayload ?? '',
+        machineIdentifiersReviewed: true,
+        calories: valueText(template.caloriesPerServing),
+        carbs: valueText(template.carbsPerServing),
+        protein: valueText(template.proteinPerServing),
+        fat: valueText(template.fatPerServing),
+        sodium: valueText(template.sodiumMgPerServing),
+        reusedTemplate: true,
+        templateImageUrl: template.imageUrl ?? '',
+        templateCookingGuideImageUrl: template.cookingGuideImageUrl ?? ''
+      });
+      setPhotoReady({ front: true, back: true });
+      setExtractionStatus('ready');
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function choosePackingSlip(camera: boolean) {
+    try {
+      const permission = camera
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Photo permission needed', 'Allow photo access to read the packing slip.');
+        return;
+      }
+      const result = camera
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            quality: 0.7,
+            allowsEditing: true,
+            preferredAssetRepresentationMode:
+              ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 0.7,
+            allowsEditing: true,
+            preferredAssetRepresentationMode:
+              ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible
+          });
+      if (result.canceled || !result.assets[0]) return;
+      setPackingSlip(result.assets[0]);
+      setPackingManifest(null);
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  function addPackingSlip() {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ['Cancel', 'Take photo', 'Choose from library'], cancelButtonIndex: 0 },
+        index => {
+          if (index === 1) void choosePackingSlip(true);
+          if (index === 2) void choosePackingSlip(false);
+        }
+      );
+      return;
+    }
+    Alert.alert('Add packing slip', 'Choose a source', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Take photo', onPress: () => void choosePackingSlip(true) },
+      { text: 'Choose from library', onPress: () => void choosePackingSlip(false) }
+    ]);
+  }
+
+  async function readPackingSlip() {
+    if (!packingSlip) return;
+    setPackingBusy(true);
+    try {
+      setPackingManifest(await data.extractPackingSlip(
+        packingSlip.uri,
+        packingSlip.mimeType ?? 'image/jpeg',
+        packingSlip.fileName ?? 'packing-slip.jpg'
+      ));
+    } catch (error) {
+      showError(error);
+    } finally {
+      setPackingBusy(false);
+    }
+  }
+
+  async function confirmPackingManifest() {
+    if (!packingManifest) return;
+    const orderId = packingManifest.orderId?.trim();
+    if (!orderId) {
+      Alert.alert('Order ID required', 'Enter the order number before confirming this shipment.');
+      return;
+    }
+    if (packingManifest.lines.some(line => line.status !== 'KNOWN' || !line.template)) {
+      Alert.alert(
+        'Resolve every row',
+        'Changed and unknown meals must be reviewed and saved as templates before confirmation.'
+      );
+      return;
+    }
+    setShipmentBusy(true);
+    try {
+      const result = await data.confirmShipment({
+        orderId,
+        shippedAt: packingManifest.shippedAt,
+        lines: packingManifest.lines.map(line => ({
+          templateId: line.template!.id,
+          itemCode: line.itemCode,
+          quantity: line.quantity
+        }))
+      });
+      setPackingManifest(null);
+      setPackingSlip(null);
+      await refresh();
+      Alert.alert(
+        'Shipment added',
+        `${result.totalBoxes} boxes were added to your freezer in one transaction.`
+      );
+    } catch (error) {
+      showError(error);
+    } finally {
+      setShipmentBusy(false);
+    }
+  }
+
   const filteredMeals = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return meals;
-    return meals.filter(meal => [meal.name, meal.description, meal.category].some(value => value?.toLowerCase().includes(query)));
+    return meals.filter(meal => [
+      meal.name,
+      meal.description,
+      meal.category,
+      meal.cookingMealCode,
+      meal.frontBarcodePayload,
+      meal.backQrPayload
+    ].some(value => value?.toLowerCase().includes(query)));
   }, [meals, search]);
 
   async function drawDinner(allowRecent = false, excludeMealId?: string) {
@@ -249,7 +442,14 @@ export default function App() {
       setExtractionError('');
       setForm(current => ({
         ...current,
-        name: '', description: '', category: '', calories: '', carbs: '', protein: '', fat: '', sodium: '',
+        name: '', description: '', category: '', cookingMealCode: '',
+        frontCookingMealCode: '', backCookingMealCode: '',
+        frontBarcodePayload: '', backQrPayload: '',
+        machineIdentifiersReviewed: true,
+        reusedTemplate: false,
+        templateImageUrl: '',
+        templateCookingGuideImageUrl: '',
+        calories: '', carbs: '', protein: '', fat: '', sodium: '',
         ...photoFormPatch(side, asset)
       }));
     } catch (error) {
@@ -285,7 +485,8 @@ export default function App() {
   }
 
   async function saveMeal() {
-    if (!photoReady.front || !photoReady.back || !form.frontImageUri || !form.backImageUri) {
+    if (!form.reusedTemplate
+        && (!photoReady.front || !photoReady.back || !form.frontImageUri || !form.backImageUri)) {
       Alert.alert('Two photos required', 'Add the meal-card front and cooking-guide back before reviewing the meal.');
       return;
     }
@@ -293,14 +494,32 @@ export default function App() {
       Alert.alert('Meal name required', 'Enter the name shown on the prepared meal card.');
       return;
     }
+    if (!form.cookingMealCode.trim()) {
+      Alert.alert('Cooking code required', 'Review and enter the cooking meal code printed on the card.');
+      return;
+    }
+    if (!form.machineIdentifiersReviewed) {
+      Alert.alert(
+        'Review card identifiers',
+        'Confirm the decoded barcode and QR values before adding this meal.'
+      );
+      return;
+    }
     setBusy(true);
     try {
-      const imageUrl = await savePhoto(form.frontImageUri, form.frontImageBase64, form.frontImageMime, form.frontImageName);
-      const cookingGuideImageUrl = await savePhoto(form.backImageUri, form.backImageBase64, form.backImageMime, form.backImageName);
+      const imageUrl = form.reusedTemplate
+        ? clean(form.templateImageUrl) ?? null
+        : await savePhoto(form.frontImageUri, form.frontImageBase64, form.frontImageMime, form.frontImageName);
+      const cookingGuideImageUrl = form.reusedTemplate
+        ? clean(form.templateCookingGuideImageUrl) ?? null
+        : await savePhoto(form.backImageUri, form.backImageBase64, form.backImageMime, form.backImageName);
       const input: MealInput = {
         name: form.name.trim(),
         description: clean(form.description),
         category: clean(form.category),
+        cookingMealCode: form.cookingMealCode.trim(),
+        frontBarcodePayload: clean(form.frontBarcodePayload),
+        backQrPayload: clean(form.backQrPayload),
         quantity: 1,
         caloriesPerServing: numberOrNull(form.calories),
         carbsPerServing: numberOrNull(form.carbs),
@@ -309,10 +528,11 @@ export default function App() {
         sodiumMgPerServing: numberOrNull(form.sodium),
         imageUrl,
         cookingGuideImageUrl,
-        source: form.frontImageUri || form.backImageUri ? 'PHOTO' : 'MANUAL'
+        source: form.reusedTemplate ? 'TEMPLATE' : 'PHOTO'
       };
       const saved = await data.addMeal(input);
       setForm(emptyForm);
+      setTemplateIdentifier('');
       setPhotoReady({ front: false, back: false });
       setExtractionStatus('idle');
       setExtractionError('');
@@ -386,6 +606,18 @@ export default function App() {
               photoReady={photoReady}
               extractionStatus={extractionStatus}
               extractionError={extractionError}
+              templateIdentifier={templateIdentifier}
+              setTemplateIdentifier={setTemplateIdentifier}
+              onReuseTemplate={() => void reuseTemplate()}
+              packingSlip={packingSlip}
+              packingManifest={packingManifest}
+              packingBusy={packingBusy}
+              shipmentBusy={shipmentBusy}
+              onAddPackingSlip={addPackingSlip}
+              onReadPackingSlip={() => void readPackingSlip()}
+              onConfirmPackingSlip={() => void confirmPackingManifest()}
+              onPackingOrderIdChange={value => setPackingManifest(current =>
+                current ? { ...current, orderId: value } : current)}
               onAddPhoto={addPhoto}
               onPhotoReady={side => setPhotoReady(current => ({ ...current, [side]: true }))}
               onExtract={() => void extractMeal()}
@@ -410,6 +642,7 @@ export default function App() {
   );
 }
 
+/** Displays the application identity and active persistence mode. */
 function Header({ mode }: { mode: string }) {
   return (
     <View style={styles.header}>
@@ -423,6 +656,7 @@ function Header({ mode }: { mode: string }) {
   );
 }
 
+/** Displays dashboard totals, recent dinners, and the random-draw entry point. */
 function HomeScreen({ dashboard, history, meals, busy, onDraw, onRelaxedDraw, showRelaxed, refreshing, refresh }: {
   dashboard: Dashboard | null; history: HistoryEntry[]; meals: Meal[]; busy: boolean;
   onDraw: () => void; onRelaxedDraw: () => void; showRelaxed: boolean; refreshing: boolean; refresh: () => void;
@@ -470,6 +704,7 @@ function HomeScreen({ dashboard, history, meals, busy, onDraw, onRelaxedDraw, sh
           <Card key={meal.id} style={styles.previewCard}>
             <MealImage meal={meal} />
             <Text numberOfLines={2} style={styles.previewName}>{meal.name}</Text>
+            <CookingCode code={meal.cookingMealCode} compact />
             <Pill tone="brand">× {meal.quantity}</Pill>
           </Card>
         ))}
@@ -478,6 +713,7 @@ function HomeScreen({ dashboard, history, meals, busy, onDraw, onRelaxedDraw, sh
   );
 }
 
+/** Displays searchable inventory with quantity and consumption actions. */
 function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncrement, onDecrement, onDelete, onAdd, refreshing, refresh }: {
   meals: Meal[]; search: string; setSearch: (value: string) => void; busy: boolean;
   onConsume: (meal: Meal) => void; onIncrement: (meal: Meal) => void; onDecrement: (meal: Meal) => void;
@@ -504,6 +740,8 @@ function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncremen
                 {meal.category ? <Pill tone="neutral">{meal.category}</Pill> : null}
                 <Pill tone="mint">2 servings</Pill>
               </View>
+              <CookingCode code={meal.cookingMealCode} compact />
+              <MachineIdentifiers meal={meal} />
             </View>
           </View>
           <NutritionRow meal={meal} />
@@ -526,25 +764,126 @@ function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncremen
   );
 }
 
-function AddScreen({ form, setForm, busy, photoReady, extractionStatus, extractionError, onAddPhoto, onPhotoReady, onExtract, onSave }: {
+/** Captures meal details and card photos for extraction and review. */
+function AddScreen({
+  form,
+  setForm,
+  busy,
+  photoReady,
+  extractionStatus,
+  extractionError,
+  templateIdentifier,
+  setTemplateIdentifier,
+  onReuseTemplate,
+  packingSlip,
+  packingManifest,
+  packingBusy,
+  shipmentBusy,
+  onAddPackingSlip,
+  onReadPackingSlip,
+  onConfirmPackingSlip,
+  onPackingOrderIdChange,
+  onAddPhoto,
+  onPhotoReady,
+  onExtract,
+  onSave
+}: {
   form: FormState; setForm: React.Dispatch<React.SetStateAction<FormState>>; busy: boolean;
   photoReady: Record<PhotoSide, boolean>;
   extractionStatus: 'idle' | 'reading' | 'ready' | 'error';
   extractionError: string;
+  templateIdentifier: string;
+  setTemplateIdentifier: (value: string) => void;
+  onReuseTemplate: () => void;
+  packingSlip: SelectedPhoto | null;
+  packingManifest: PackingSlipManifest | null;
+  packingBusy: boolean;
+  shipmentBusy: boolean;
+  onAddPackingSlip: () => void;
+  onReadPackingSlip: () => void;
+  onConfirmPackingSlip: () => void;
+  onPackingOrderIdChange: (value: string) => void;
   onAddPhoto: (side: PhotoSide) => void;
   onPhotoReady: (side: PhotoSide) => void;
   onExtract: () => void;
   onSave: () => void;
 }) {
-  const field = (key: keyof FormState, value: string) => setForm(current => ({ ...current, [key]: value }));
+  const field = <K extends keyof FormState,>(key: K, value: FormState[K]) =>
+    setForm(current => ({ ...current, [key]: value }));
   const captureStep = photoCaptureStep(photoReady.front, photoReady.back);
+  const cookingCodeConflict = Boolean(
+    form.frontCookingMealCode
+    && form.backCookingMealCode
+    && form.frontCookingMealCode !== form.backCookingMealCode
+  );
   const photoError = () => Alert.alert('Photo could not be opened', 'Choose a different photo and try again.');
   return (
     <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <Text style={styles.pageTitle}>Add a meal</Text>
       <Text style={styles.pageSubtitle}>Add the meal-card front and cooking-guide back, then review the details.</Text>
 
-      <Card style={styles.photoCard}>
+      <Card>
+        <Text style={styles.photoSideTitle}>Add a delivery packing slip</Text>
+        <Text style={styles.cardMuted}>
+          Crop to the item table so the shipping address stays out of the upload, then see which
+          meals are already known.
+        </Text>
+        {packingSlip ? (
+          <Image source={{ uri: packingSlip.uri }} style={styles.photoPreview} resizeMode="cover" />
+        ) : null}
+        <View style={styles.templateActions}>
+          <PrimaryButton
+            label={packingSlip ? 'Replace slip photo' : 'Add slip photo'}
+            onPress={onAddPackingSlip}
+            secondary
+          />
+          {packingSlip ? (
+            <PrimaryButton
+              label={packingBusy ? 'Reading…' : 'Read packing slip'}
+              onPress={onReadPackingSlip}
+              disabled={packingBusy}
+            />
+          ) : null}
+        </View>
+        {packingManifest ? (
+          <PackingManifestReview
+            manifest={packingManifest}
+            shipmentBusy={shipmentBusy}
+            onConfirm={onConfirmPackingSlip}
+            onOrderIdChange={onPackingOrderIdChange}
+          />
+        ) : null}
+      </Card>
+
+      <Card>
+        <Text style={styles.photoSideTitle}>Already scanned this meal?</Text>
+        <Text style={styles.cardMuted}>Find its saved definition using any card identifier.</Text>
+        <Field
+          label="Cooking code, barcode, or QR payload"
+          value={templateIdentifier}
+          onChangeText={setTemplateIdentifier}
+          placeholder="012-A"
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+        <PrimaryButton
+          label={busy ? 'Looking…' : 'Reuse saved meal'}
+          onPress={onReuseTemplate}
+          disabled={busy}
+          secondary
+        />
+      </Card>
+
+      {form.reusedTemplate && (
+        <Card style={styles.codeWarning}>
+          <Text style={styles.codeWarningTitle}>Saved meal found</Text>
+          <Text style={styles.codeWarningText}>
+            Review the saved definition below, then add this box without rescanning its cards.
+          </Text>
+        </Card>
+      )}
+
+      {!form.reusedTemplate && <Card style={styles.photoCard}>
         <Text style={styles.photoSideTitle}>1. Meal card · front</Text>
         <Text style={styles.cardMuted}>Meal overview, ingredients, and nutrition facts.</Text>
         {form.frontImageUri ? <Image source={{ uri: form.frontImageUri }} style={styles.photoPreview} resizeMode="cover" onLoad={() => onPhotoReady('front')} onError={photoError} /> : (
@@ -584,7 +923,7 @@ function AddScreen({ form, setForm, busy, photoReady, extractionStatus, extracti
             )}
           </>
         )}
-      </Card>
+      </Card>}
 
       {captureStep === 'review' && extractionStatus === 'idle' && (
         <PrimaryButton label="Read meal card" onPress={onExtract} />
@@ -618,6 +957,64 @@ function AddScreen({ form, setForm, busy, photoReady, extractionStatus, extracti
             <Field label="Meal name *" value={form.name} onChangeText={value => field('name', value)} placeholder="Chicken Tikka Masala" />
             <Field label="Description" value={form.description} onChangeText={value => field('description', value)} placeholder="Chicken with basmati rice" multiline />
             <Field label="Category" value={form.category} onChangeText={value => field('category', value)} placeholder="Chicken" />
+            {cookingCodeConflict && (
+              <View accessibilityRole="alert" style={styles.codeWarning}>
+                <Text style={styles.codeWarningTitle}>Cooking codes need review</Text>
+                <Text style={styles.codeWarningText}>Front: {form.frontCookingMealCode}</Text>
+                <Text style={styles.codeWarningText}>Back: {form.backCookingMealCode}</Text>
+              </View>
+            )}
+            <Field
+              label="Cooking meal code *"
+              value={form.cookingMealCode}
+              onChangeText={value => field('cookingMealCode', value)}
+              placeholder="012-A"
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            <Text style={styles.fieldHelp}>Confirm the code used to program the Suvie appliance.</Text>
+            <Field
+              label="Front barcode payload"
+              value={form.frontBarcodePayload}
+              onChangeText={value => setForm(current => ({
+                ...current,
+                frontBarcodePayload: value,
+                machineIdentifiersReviewed: false
+              }))}
+              placeholder="Not detected"
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            <Field
+              label="Back QR payload"
+              value={form.backQrPayload}
+              onChangeText={value => setForm(current => ({
+                ...current,
+                backQrPayload: value,
+                machineIdentifiersReviewed: false
+              }))}
+              placeholder="Not detected"
+              autoCorrect={false}
+              autoCapitalize="none"
+              multiline
+            />
+            <Text style={styles.fieldHelp}>
+              These are retained as separate identifiers; they may differ from the cooking code.
+            </Text>
+            {!form.machineIdentifiersReviewed && (
+              <View accessibilityRole="alert" style={styles.codeWarning}>
+                <Text style={styles.codeWarningTitle}>Review decoded identifiers</Text>
+                <Text style={styles.codeWarningText}>
+                  Confirm these values against the card. Keep them separate if they do not match
+                  the printed cooking code.
+                </Text>
+                <PrimaryButton
+                  label="Identifiers reviewed"
+                  onPress={() => field('machineIdentifiersReviewed', true)}
+                  secondary
+                />
+              </View>
+            )}
           </Card>
 
           <View style={styles.sectionHeader}>
@@ -642,6 +1039,76 @@ function AddScreen({ form, setForm, busy, photoReady, extractionStatus, extracti
   );
 }
 
+/** Displays a review-only shipment manifest and its template-match states. */
+function PackingManifestReview({
+  manifest,
+  shipmentBusy,
+  onConfirm,
+  onOrderIdChange
+}: {
+  manifest: PackingSlipManifest;
+  shipmentBusy: boolean;
+  onConfirm: () => void;
+  onOrderIdChange: (value: string) => void;
+}) {
+  const unresolved = manifest.lines.filter(
+    line => line.status !== 'KNOWN' || !line.template
+  ).length;
+  return (
+    <View style={styles.manifestReview}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Shipment review</Text>
+        <Text style={styles.sectionMeta}>{manifest.lines.length} rows</Text>
+      </View>
+      <Field
+        label="Order ID *"
+        value={manifest.orderId ?? ''}
+        onChangeText={onOrderIdChange}
+        placeholder="R2533747606"
+        autoCorrect={false}
+        autoCapitalize="none"
+      />
+      {manifest.shippedAt ? <Text style={styles.cardMuted}>Shipped {manifest.shippedAt}</Text> : null}
+      {manifest.lines.map((line, index) => (
+        <View key={`${line.itemCode ?? 'row'}-${index}`} style={styles.manifestRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>{line.description || 'Unreadable meal description'}</Text>
+            <Text style={styles.cardMuted}>
+              Code {line.itemCode || 'unreadable'} · Quantity {line.quantity}
+            </Text>
+            {line.status === 'CHANGED' && line.template ? (
+              <Text style={styles.manifestWarning}>Saved as: {line.template.name}</Text>
+            ) : null}
+          </View>
+          <Pill tone={
+            line.status === 'KNOWN' ? 'mint'
+              : line.status === 'CHANGED' ? 'orange'
+                : 'neutral'
+          }>
+            {line.status.toLowerCase()}
+          </Pill>
+        </View>
+      ))}
+      {unresolved ? (
+        <Text style={styles.manifestWarning}>
+          Resolve {unresolved} changed or unknown {unresolved === 1 ? 'row' : 'rows'} before
+          confirmation.
+        </Text>
+      ) : (
+        <PrimaryButton
+          label={shipmentBusy ? 'Adding shipment…' : 'Confirm shipment'}
+          onPress={onConfirm}
+          disabled={shipmentBusy || !manifest.orderId?.trim()}
+        />
+      )}
+      <Text style={styles.fieldHelp}>
+        Confirmation adds every quantity atomically and cannot be repeated for the same order ID.
+      </Text>
+    </View>
+  );
+}
+
+/** Displays immutable dinner snapshots and their one-box undo actions. */
 function HistoryScreen({ history, busy, undo, refreshing, refresh }: {
   history: HistoryEntry[]; busy: boolean; undo: (entry: HistoryEntry) => void; refreshing: boolean; refresh: () => void;
 }) {
@@ -669,6 +1136,7 @@ function HistoryScreen({ history, busy, undo, refreshing, refresh }: {
   );
 }
 
+/** Presents a random preview for confirmation, redraw, or cancellation. */
 function PickModal({ result, busy, close, confirm, drawAgain }: {
   result: Meal | null;
   busy: boolean;
@@ -699,6 +1167,7 @@ function PickModal({ result, busy, close, confirm, drawAgain }: {
             <Pill tone="mint">2 servings</Pill>
             {carbs != null && <Pill tone="orange">{carbs}g carbs / serving</Pill>}
           </View>
+          <CookingCode code={result.cookingMealCode} />
           <NutritionRow meal={result} />
           <PrimaryButton label={busy ? 'Choosing…' : 'Choose this meal'} onPress={confirm} disabled={busy} />
           <PrimaryButton label={busy ? 'Drawing…' : 'Draw another meal'} onPress={drawAgain} disabled={busy} secondary />
@@ -709,6 +1178,7 @@ function PickModal({ result, busy, close, confirm, drawAgain }: {
   );
 }
 
+/** Provides persistent navigation among the four primary screens. */
 function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
   const items: Array<[Tab, string, string]> = [
     ['home', '⌂', 'Home'], ['inventory', '▦', 'Freezer'], ['add', '＋', 'Add'], ['history', '◷', 'History']
@@ -725,6 +1195,7 @@ function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
   );
 }
 
+/** Renders a consistently labeled text input. */
 function Field({ label, compact, ...inputProps }: { label: string; compact?: boolean } & React.ComponentProps<typeof TextInput>) {
   return (
     <View style={[styles.field, compact && styles.fieldCompact]}>
@@ -734,13 +1205,19 @@ function Field({ label, compact, ...inputProps }: { label: string; compact?: boo
   );
 }
 
+/** Renders one dashboard statistic. */
 function Stat({ value, label }: { value: number; label: string }) {
   return <Card style={styles.statCard}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></Card>;
 }
 
+/** Converts an inventory meal into an editable API input with a new quantity. */
 function toInput(meal: Meal, quantity: number): MealInput {
   return {
-    name: meal.name, description: meal.description ?? undefined, category: meal.category ?? undefined, quantity,
+    name: meal.name, description: meal.description ?? undefined, category: meal.category ?? undefined,
+    cookingMealCode: meal.cookingMealCode,
+    frontBarcodePayload: meal.frontBarcodePayload,
+    backQrPayload: meal.backQrPayload,
+    quantity,
     caloriesPerServing: meal.caloriesPerServing, carbsPerServing: meal.carbsPerServing,
     proteinPerServing: meal.proteinPerServing, fatPerServing: meal.fatPerServing,
     sodiumMgPerServing: meal.sodiumMgPerServing, imageUrl: meal.imageUrl,
@@ -748,16 +1225,22 @@ function toInput(meal: Meal, quantity: number): MealInput {
   };
 }
 
+/** Trims optional text and represents empty content as absent. */
 function clean(value: string) { return value.trim() || undefined; }
+/** Parses an optional numeric form value, returning null when unusable. */
 function numberOrNull(value: string) { const parsed = Number(value); return value.trim() && Number.isFinite(parsed) ? Math.round(parsed) : null; }
+/** Converts an optional stored number into text-input content. */
 function valueText(value?: number | null) { return value == null ? '' : String(value); }
 async function savePhoto(uri: string, base64?: string, mime?: string, name?: string): Promise<string | null> {
   if (!uri) return null;
   if (dataMode === 'local' && base64) return `data:${mime ?? 'image/jpeg'};base64,${base64}`;
   return data.uploadImage(uri, mime, name);
 }
+/** Extracts a user-facing message from an unknown failure. */
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong'; }
+/** Presents an unknown failure using the platform alert UI. */
 function showError(error: unknown) { Alert.alert('MealDeck', errorMessage(error)); }
+/** Formats an ISO timestamp for compact local display. */
 function formatDate(value: string) { return new Date(value).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
 
 async function confirmAction(title: string, message: string): Promise<boolean> {
@@ -821,6 +1304,17 @@ const styles = StyleSheet.create({
   field: { marginBottom: 13 }, fieldCompact: { flex: 1 }, fieldLabel: { color: colors.ink, fontSize: 12, fontWeight: '800', marginBottom: 6 },
   input: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.line, borderRadius: 12, minHeight: 45, paddingHorizontal: 12, color: colors.ink, fontSize: 15 },
   inputMultiline: { minHeight: 76, paddingTop: 11, textAlignVertical: 'top' }, twoColumns: { flexDirection: 'row', gap: 12 },
+  fieldHelp: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: -8, marginBottom: 10 },
+  templateActions: { gap: 10, marginTop: 12 },
+  manifestReview: { marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.line },
+  manifestRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line
+  },
+  manifestWarning: { color: colors.accent, fontSize: 12, fontWeight: '700', marginTop: 4 },
+  codeWarning: { backgroundColor: colors.accentSoft, borderRadius: 12, marginBottom: 13, padding: 12 },
+  codeWarningTitle: { color: colors.danger, fontSize: 13, fontWeight: '900', marginBottom: 4 },
+  codeWarningText: { color: colors.ink, fontSize: 12, fontWeight: '700' },
   formFootnote: { color: colors.muted, fontSize: 11, lineHeight: 16, textAlign: 'center', paddingHorizontal: 12 },
   historyCard: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   calendarBadge: { width: 48, height: 52, borderRadius: 13, backgroundColor: colors.brandSoft, alignItems: 'center', justifyContent: 'center' },

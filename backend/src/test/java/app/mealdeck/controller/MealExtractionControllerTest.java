@@ -10,6 +10,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import app.mealdeck.dto.MealExtractionResponse;
 import app.mealdeck.service.MealExtractionService;
 
+/** Verifies delegation and structured output from the extraction controller. */
 class MealExtractionControllerTest {
     @Test
     void returnsStructuredPerServingExtractionForThePhotoPair() {
@@ -18,7 +19,9 @@ class MealExtractionControllerTest {
         MockMultipartFile front = new MockMultipartFile("front", "front.jpg", "image/jpeg", new byte[] { 1 });
         MockMultipartFile back = new MockMultipartFile("back", "back.jpg", "image/jpeg", new byte[] { 2 });
         MealExtractionResponse expected = new MealExtractionResponse(
-                "Teriyaki Salmon", "Salmon with rice", "Seafood", 510, 42, 31, 18, 850);
+                "Teriyaki Salmon", "Salmon with rice", "Seafood",
+                "012-A", "012-A", "012-A", "310012345678", "https://suvie.com/m/012-A",
+                510, 42, 31, 18, 850);
         when(service.extract(front, back)).thenReturn(expected);
 
         assertThat(controller.extract(front, back)).isEqualTo(expected);

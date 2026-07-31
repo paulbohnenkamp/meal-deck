@@ -29,20 +29,36 @@ import app.mealdeck.repository.MealHistoryRepository;
 import app.mealdeck.repository.MealRepository;
 
 @Service
+/**
+ * Owns transactional inventory, random-selection, and history rules.
+ */
 public class MealDeckService {
     private final MealRepository meals;
     private final MealHistoryRepository history;
     private final MealMapper mealMapper;
     private final HistoryMapper historyMapper;
+    private final MealTemplateService templates;
 
+    /**
+     * Creates the domain service with its persistence and mapping collaborators.
+     *
+     * @param meals inventory repository
+     * @param history dinner-history repository
+     * @param mealMapper inventory response mapper
+     * @param historyMapper history response mapper
+     * @param templates reusable reviewed meal definitions
+     */
     public MealDeckService(MealRepository meals, MealHistoryRepository history,
-                           MealMapper mealMapper, HistoryMapper historyMapper) {
+                           MealMapper mealMapper, HistoryMapper historyMapper,
+                           MealTemplateService templates) {
         this.meals = meals;
         this.history = history;
         this.mealMapper = mealMapper;
         this.historyMapper = historyMapper;
+        this.templates = templates;
     }
 
+    /** @return all inventory meals sorted case-insensitively by name */
     @Transactional(readOnly = true)
     public List<MealResponse> listMeals() {
         return meals.findAll().stream()
@@ -50,6 +66,12 @@ public class MealDeckService {
                 .map(mealMapper::toResponse).toList();
     }
 
+    /**
+     * Adds boxes, consolidating duplicates by normalized meal name.
+     *
+     * @param request new meal values
+     * @return saved consolidated inventory meal
+     */
     @Transactional
     public MealResponse addMeal(MealRequest request) {
         String normalized = Meal.normalize(request.name());
@@ -58,6 +80,9 @@ public class MealDeckService {
         meal.setName(request.name().trim());
         meal.setDescription(request.description());
         meal.setCategory(request.category());
+        meal.setCookingMealCode(cleanCode(request.cookingMealCode()));
+        meal.setFrontBarcodePayload(cleanCode(request.frontBarcodePayload()));
+        meal.setBackQrPayload(cleanCode(request.backQrPayload()));
         meal.setQuantity((existing ? meal.getQuantity() : 0) + valueOr(request.quantity(), 1));
         meal.setServings(2);
         meal.setCaloriesPerServing(request.caloriesPerServing());
@@ -68,15 +93,27 @@ public class MealDeckService {
         meal.setImageUrl(request.imageUrl());
         meal.setCookingGuideImageUrl(request.cookingGuideImageUrl());
         meal.setSource(request.source());
-        return mealMapper.toResponse(meals.save(meal));
+        MealResponse response = mealMapper.toResponse(meals.save(meal));
+        templates.remember(request);
+        return response;
     }
 
+    /**
+     * Updates an existing meal while preserving its two-serving invariant.
+     *
+     * @param id meal identifier
+     * @param request replacement values
+     * @return updated inventory meal
+     */
     @Transactional
     public MealResponse updateMeal(UUID id, MealRequest request) {
         Meal meal = getMeal(id);
         meal.setName(request.name().trim());
         meal.setDescription(request.description());
         meal.setCategory(request.category());
+        meal.setCookingMealCode(cleanCode(request.cookingMealCode()));
+        meal.setFrontBarcodePayload(cleanCode(request.frontBarcodePayload()));
+        meal.setBackQrPayload(cleanCode(request.backQrPayload()));
         meal.setQuantity(valueOr(request.quantity(), meal.getQuantity()));
         meal.setCaloriesPerServing(request.caloriesPerServing());
         meal.setCarbsPerServing(request.carbsPerServing());
@@ -87,24 +124,42 @@ public class MealDeckService {
         meal.setCookingGuideImageUrl(request.cookingGuideImageUrl());
         meal.setSource(request.source());
         try {
-            return mealMapper.toResponse(meals.saveAndFlush(meal));
+            MealResponse response = mealMapper.toResponse(meals.saveAndFlush(meal));
+            templates.remember(request);
+            return response;
         } catch (RuntimeException ex) {
             throw new DuplicateMealNameException(ex);
         }
     }
 
+    /** @param id identifier of the inventory meal to delete */
     @Transactional
     public void deleteMeal(UUID id) {
         if (!meals.existsById(id)) throw new MealNotFoundException(id);
         meals.deleteById(id);
     }
 
+    /**
+     * Selects, consumes, and records an eligible random meal atomically.
+     *
+     * @param avoidDays recent-history exclusion window
+     * @param allowRecent whether to relax the recent-name exclusion
+     * @return consumed meal and its history snapshot
+     */
     @Transactional
     public PickResponse pickRandom(int avoidDays, boolean allowRecent) {
         MealResponse preview = previewRandom(avoidDays, allowRecent, null);
         return consume(preview.id(), avoidDays);
     }
 
+    /**
+     * Selects an eligible meal without changing inventory or history.
+     *
+     * @param avoidDays recent-history exclusion window
+     * @param allowRecent whether to relax the recent-name exclusion
+     * @param excludeMealId previous preview omitted when alternatives exist
+     * @return selected inventory meal
+     */
     @Transactional(readOnly = true)
     public MealResponse previewRandom(int avoidDays, boolean allowRecent, UUID excludeMealId) {
         List<Meal> available = meals.findByQuantityGreaterThanOrderByNameAsc(0);
@@ -127,6 +182,13 @@ public class MealDeckService {
         return mealMapper.toResponse(selected);
     }
 
+    /**
+     * Consumes one box and records a nutrition snapshot atomically.
+     *
+     * @param mealId meal identifier
+     * @param avoidDays selection window reported in the result
+     * @return consumed meal and new history entry
+     */
     @Transactional
     public PickResponse consume(UUID mealId, int avoidDays) {
         return consume(getMeal(mealId), avoidDays);
@@ -147,11 +209,18 @@ public class MealDeckService {
         return new PickResponse(mealMapper.toResponse(meal), historyMapper.toResponse(entry), avoidDays);
     }
 
+    /** @return dinner history newest first */
     @Transactional(readOnly = true)
     public List<HistoryResponse> listHistory() {
         return history.findAllByOrderByConsumedAtDesc().stream().map(historyMapper::toResponse).toList();
     }
 
+    /**
+     * Deletes a history entry and restores exactly one meal box.
+     *
+     * @param historyId history identifier
+     * @return restored inventory meal
+     */
     @Transactional
     public MealResponse undoHistory(UUID historyId) {
         MealHistory entry = history.findById(historyId)
@@ -172,6 +241,12 @@ public class MealDeckService {
         return mealMapper.toResponse(saved);
     }
 
+    /**
+     * Computes inventory and strict-draw eligibility totals.
+     *
+     * @param avoidDays recent-history exclusion window
+     * @return dashboard summary
+     */
     @Transactional(readOnly = true)
     public DashboardResponse dashboard(int avoidDays) {
         List<Meal> all = meals.findAll();
@@ -192,4 +267,8 @@ public class MealDeckService {
     }
 
     private int valueOr(Integer value, int fallback) { return value == null ? fallback : value; }
+
+    private String cleanCode(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
 }

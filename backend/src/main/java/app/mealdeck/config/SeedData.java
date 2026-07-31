@@ -8,7 +8,16 @@ import app.mealdeck.entity.Meal;
 import app.mealdeck.repository.MealRepository;
 
 @Configuration
+/**
+ * Supplies sample inventory when the configured database is empty.
+ */
 public class SeedData {
+    /**
+     * Creates the startup task that inserts the initial sample meals.
+     *
+     * @param meals repository used to inspect and populate inventory
+     * @return startup task that seeds an empty database
+     */
     @Bean
     CommandLineRunner seedMeals(MealRepository meals) {
         return args -> {

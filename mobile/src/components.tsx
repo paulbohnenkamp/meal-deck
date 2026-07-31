@@ -3,14 +3,17 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors } from './theme';
 import { Meal } from './types';
 
+/** Renders content in the standard elevated MealDeck surface. */
 export function Card({ children, style }: PropsWithChildren<{ style?: object }>) {
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
+/** Renders a compact semantic status label. */
 export function Pill({ children, tone = 'brand' }: PropsWithChildren<{ tone?: 'brand' | 'mint' | 'orange' | 'neutral' }>) {
   return <View style={[styles.pill, styles[`pill_${tone}`]]}><Text style={[styles.pillText, styles[`pillText_${tone}`]]}>{children}</Text></View>;
 }
 
+/** Renders the primary or secondary application action button. */
 export function PrimaryButton({ label, onPress, disabled = false, secondary = false }: { label: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
   return (
     <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [
@@ -21,6 +24,7 @@ export function PrimaryButton({ label, onPress, disabled = false, secondary = fa
   );
 }
 
+/** Displays the four principal nutrition values, all measured per serving. */
 export function NutritionRow({ meal }: { meal: Meal }) {
   const items = [
     ['Carbs', meal.carbsPerServing, 'g'],
@@ -40,11 +44,45 @@ export function NutritionRow({ meal }: { meal: Meal }) {
   );
 }
 
+/** Displays a meal photo or an accessible visual placeholder. */
 export function MealImage({ meal, large = false }: { meal: Meal; large?: boolean }) {
   if (meal.imageUrl) return <Image source={{ uri: meal.imageUrl }} style={[styles.image, large && styles.imageLarge]} />;
   return (
     <View style={[styles.image, styles.placeholder, large && styles.imageLarge]}>
       <Text style={styles.placeholderEmoji}>🍽️</Text>
+    </View>
+  );
+}
+
+/** Displays the appliance cooking code as prominent operational information. */
+export function CookingCode({ code, compact = false }: { code?: string | null; compact?: boolean }) {
+  if (!code) return null;
+  return (
+    <View
+      accessibilityLabel={`Cooking meal code ${code}`}
+      style={[styles.cookingCode, compact && styles.cookingCodeCompact]}
+    >
+      <Text style={styles.cookingCodeLabel}>COOKING CODE</Text>
+      <Text selectable style={[styles.cookingCodeValue, compact && styles.cookingCodeValueCompact]}>{code}</Text>
+    </View>
+  );
+}
+
+/** Displays retained machine-readable card identifiers for inspection. */
+export function MachineIdentifiers({ meal }: { meal: Meal }) {
+  if (!meal.frontBarcodePayload && !meal.backQrPayload) return null;
+  return (
+    <View style={styles.machineIdentifiers}>
+      {meal.frontBarcodePayload ? (
+        <Text selectable numberOfLines={2} style={styles.machineIdentifier}>
+          Barcode: {meal.frontBarcodePayload}
+        </Text>
+      ) : null}
+      {meal.backQrPayload ? (
+        <Text selectable numberOfLines={2} style={styles.machineIdentifier}>
+          QR: {meal.backQrPayload}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -67,5 +105,15 @@ const styles = StyleSheet.create({
   nutritionLabel: { color: colors.muted, fontSize: 11, marginTop: 2 },
   image: { width: 76, height: 76, borderRadius: 15, backgroundColor: colors.brandSoft },
   imageLarge: { width: '100%', height: 210, borderRadius: 20 },
-  placeholder: { justifyContent: 'center', alignItems: 'center' }, placeholderEmoji: { fontSize: 30 }
+  placeholder: { justifyContent: 'center', alignItems: 'center' }, placeholderEmoji: { fontSize: 30 },
+  cookingCode: {
+    alignSelf: 'stretch', backgroundColor: colors.brandSoft, borderColor: colors.brand,
+    borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 9
+  },
+  cookingCodeCompact: { alignSelf: 'flex-start', marginTop: 8, paddingHorizontal: 9, paddingVertical: 6 },
+  cookingCodeLabel: { color: colors.brand, fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
+  cookingCodeValue: { color: colors.ink, fontSize: 22, fontWeight: '900', letterSpacing: 1.2, marginTop: 1 },
+  cookingCodeValueCompact: { fontSize: 16 },
+  machineIdentifiers: { marginTop: 8, gap: 3 },
+  machineIdentifier: { color: colors.muted, fontSize: 11 }
 });

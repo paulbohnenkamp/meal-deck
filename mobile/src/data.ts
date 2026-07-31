@@ -1,11 +1,30 @@
 import { Platform } from 'react-native';
 import { File } from 'expo-file-system';
 import { localStore } from './localStore';
-import { Dashboard, HistoryEntry, Meal, MealExtraction, MealInput, PickResult } from './types';
+import {
+  Dashboard,
+  HistoryEntry,
+  Meal,
+  MealExtraction,
+  MealInput,
+  MealTemplate,
+  PackingSlipManifest,
+  PickResult,
+  ShipmentConfirmation,
+  ShipmentConfirmationResult
+} from './types';
 
 const apiBase = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+
+/** Active persistence adapter selected from Expo's public API URL setting. */
 export const dataMode = apiBase ? 'server' : 'local';
 
+/**
+ * Sends a JSON API request and converts non-success problem responses to errors.
+ *
+ * @param path backend-relative API path
+ * @param options optional Fetch request options
+ */
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!apiBase) throw new Error('Server mode is not configured');
   const response = await fetch(`${apiBase}${path}`, {
@@ -24,6 +43,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/**
+ * Appends an image to multipart data using the platform-appropriate file API.
+ */
 async function appendPhoto(
   form: FormData,
   field: string,
@@ -40,6 +62,10 @@ async function appendPhoto(
   form.append(field, file, fileName);
 }
 
+/**
+ * Unified MealDeck data API. Each inventory method delegates to the backend
+ * when configured and otherwise mirrors the same semantics in local storage.
+ */
 export const data = {
   listMeals: (): Promise<Meal[]> => apiBase ? request('/api/meals') : localStore.listMeals(),
   addMeal: (input: MealInput): Promise<Meal> => apiBase
@@ -51,6 +77,12 @@ export const data = {
   deleteMeal: (id: string): Promise<void> => apiBase
     ? request(`/api/meals/${id}`, { method: 'DELETE' })
     : localStore.deleteMeal(id),
+  lookupTemplate: (identifier: string): Promise<MealTemplate> => apiBase
+    ? request(`/api/meal-templates/lookup?identifier=${encodeURIComponent(identifier)}`)
+    : localStore.lookupTemplate(identifier),
+  confirmShipment: (input: ShipmentConfirmation): Promise<ShipmentConfirmationResult> => apiBase
+    ? request('/api/shipments/confirm', { method: 'POST', body: JSON.stringify(input) })
+    : localStore.confirmShipment(input),
   previewRandom: (avoidDays = 7, allowRecent = false, excludeMealId?: string): Promise<Meal> => {
     const exclude = excludeMealId ? `&excludeMealId=${encodeURIComponent(excludeMealId)}` : '';
     return apiBase
@@ -82,6 +114,28 @@ export const data = {
       throw new Error(message);
     }
     return response.json() as Promise<MealExtraction>;
+  },
+  async extractPackingSlip(
+    uri: string,
+    mimeType = 'image/jpeg',
+    fileName = 'packing-slip.jpg'
+  ): Promise<PackingSlipManifest> {
+    if (!apiBase) throw new Error('Packing-slip reading requires the MealDeck backend.');
+    const form = new FormData();
+    await appendPhoto(form, 'slip', uri, mimeType, fileName);
+    const response = await fetch(`${apiBase}/api/packing-slips/extract`, {
+      method: 'POST',
+      body: form
+    });
+    if (!response.ok) {
+      let message = 'The packing slip could not be read.';
+      try {
+        const body = await response.json() as { detail?: string; message?: string };
+        message = body.detail || body.message || message;
+      } catch { /* ignore non-JSON error */ }
+      throw new Error(message);
+    }
+    return response.json() as Promise<PackingSlipManifest>;
   },
   async uploadImage(uri: string, mimeType = 'image/jpeg', fileName = 'meal.jpg'): Promise<string> {
     if (!apiBase) return uri;

@@ -6,8 +6,13 @@ A working MVP for photographing prepared meal cards, tracking freezer inventory,
 
 - Universal Expo app for iOS and web
 - Runs immediately in local/offline mode with on-device persistence
-- Optional Spring Boot 4.1 / Java 21 backend with H2 persistence and photo uploads
+- Optional Spring Boot 4.1 / Spring AI 2.0 / Java 21 backend with H2 persistence and photo uploads
 - Capture or select the meal-card front and cooking-guide back in a guided sequence
+- Extract and prominently display the appliance cooking code
+- Decode and retain the front barcode and back QR payload independently
+- Reuse revisioned meal templates without rescanning known cards
+- Crop and review a packing-slip manifest before changing inventory
+- Confirm a fully resolved shipment atomically and only once per order ID
 - Store and display nutrition per serving
 - Consolidate duplicate meal names into one inventory record
 - Random dinner draw that excludes meals eaten in the last seven days
@@ -115,11 +120,13 @@ The phone and Mac must be on the same network. For a production build, use an HT
 
 ```bash
 cd mobile
+npm test
 npm run typecheck
 npx expo export --platform web
 
 cd ../backend
 ../mvnw test
+../mvnw javadoc:javadoc
 ```
 
 ## Core behavior
@@ -146,7 +153,28 @@ Nutrition is stored and displayed **per serving**. Every prepared meal represent
 
 ## Photo extraction
 
-After the meal-card front and cooking-guide back are captured, the backend uses vision extraction to prefill the meal overview and per-serving nutrition. The user reviews and may correct the result before inventory changes. Extraction requires `OPENAI_API_KEY`; provider credentials never ship inside the iOS/web bundle.
+After the meal-card front and cooking-guide back are captured, the backend uses Spring AI's
+multimodal `ChatClient` with OpenAI to prefill the meal overview and per-serving nutrition.
+It also reads the printed cooking code from both sides. ZXing independently decodes the front
+one-dimensional barcode and back QR code. The user must review the cooking code and decoded
+identifiers before inventory changes. Provider-native structured output is used and OpenAI
+response storage is disabled.
+
+Extraction requires `OPENAI_API_KEY`; provider credentials never ship inside the iOS/web bundle.
+The backend still starts normally without a key, with extraction requests returning a
+configuration error.
+
+## Suvie-assisted delivery intake
+
+Reviewed identifier-bearing meals create reusable, immutable template revisions. A known meal can
+be found by its cooking code, barcode payload, or QR payload and added again without new card
+photos.
+
+The packing-slip flow asks the user to crop to the item table so shipping details stay out of the
+upload. Extracted rows are classified as known, changed, or unknown. Only a manifest whose rows
+all resolve to active templates can be confirmed. Confirmation requires an order ID, increments
+all consolidated quantities in one transaction, and records the order ID so the same shipment
+cannot be applied twice. Server and local modes preserve the same confirmation semantics.
 
 ## Production work still required
 

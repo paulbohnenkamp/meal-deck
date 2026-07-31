@@ -16,15 +16,19 @@ import app.mealdeck.entity.MealHistory;
 import app.mealdeck.exception.InventoryConflictException;
 import app.mealdeck.repository.MealHistoryRepository;
 import app.mealdeck.repository.MealRepository;
+import app.mealdeck.repository.MealTemplateRepository;
 
+/** Exercises the transactional inventory and history domain rules. */
 @SpringBootTest
 class MealDeckServiceTest {
     @Autowired MealDeckService service;
     @Autowired MealRepository meals;
     @Autowired MealHistoryRepository history;
+    @Autowired MealTemplateRepository templates;
+    @Autowired MealTemplateService templateService;
 
     @BeforeEach
-    void clean() { history.deleteAll(); meals.deleteAll(); }
+    void clean() { history.deleteAll(); meals.deleteAll(); templates.deleteAll(); }
 
     @Test
     void randomPreviewSkipsRecentlyEatenAndOnlyConfirmationMutatesInventory() {
@@ -71,32 +75,67 @@ class MealDeckServiceTest {
     @Test
     void mealStoresFrontAndCookingGuideImages() {
         var request = new MealRequest(
-                "Teriyaki Salmon", null, null, 1, 650, 62, 40, 25, 930,
+                "Teriyaki Salmon", null, null, " 012-A ", " 310012345678 ",
+                " https://suvie.com/m/012-A ", 1, 650, 62, 40, 25, 930,
                 "/uploads/front.heic", "/uploads/back.heic", "PHOTO");
 
         var saved = service.addMeal(request);
 
         assertThat(saved.imageUrl()).isEqualTo("/uploads/front.heic");
         assertThat(saved.cookingGuideImageUrl()).isEqualTo("/uploads/back.heic");
+        assertThat(saved.cookingMealCode()).isEqualTo("012-A");
+        assertThat(saved.frontBarcodePayload()).isEqualTo("310012345678");
+        assertThat(saved.backQrPayload()).isEqualTo("https://suvie.com/m/012-A");
     }
 
     @Test
     void duplicateMealConsolidatesQuantityAndUpdatesBothImages() {
         service.addMeal(new MealRequest(
-                "Teriyaki Salmon", null, null, 1, 650, 62, 40, 25, 930,
+                "Teriyaki Salmon", null, null, "OLD-1", null, null, 1, 650, 62, 40, 25, 930,
                 "/uploads/old-front.heic", "/uploads/old-back.heic", "PHOTO"));
 
         var consolidated = service.addMeal(new MealRequest(
-                " teriyaki  salmon ", null, null, 2, 650, 62, 40, 25, 930,
+                " teriyaki  salmon ", null, null, "NEW-2", null, null, 2, 650, 62, 40, 25, 930,
                 "/uploads/new-front.heic", "/uploads/new-back.heic", "PHOTO"));
 
         assertThat(consolidated.quantity()).isEqualTo(3);
         assertThat(consolidated.imageUrl()).isEqualTo("/uploads/new-front.heic");
         assertThat(consolidated.cookingGuideImageUrl()).isEqualTo("/uploads/new-back.heic");
+        assertThat(consolidated.cookingMealCode()).isEqualTo("NEW-2");
         assertThat(meals.count()).isEqualTo(1);
     }
 
+    @Test
+    void reviewedIdentifiersCreateReusableImmutableRevisions() {
+        var first = new MealRequest(
+                "Teriyaki Salmon", "Salmon with rice", "Seafood", "012-A",
+                "310012345678", "https://suvie.com/m/012-A", 1,
+                510, 42, 31, 18, 850, "/front.jpg", "/back.jpg", "PHOTO");
+        service.addMeal(first);
+
+        var saved = templateService.lookup("310012345678");
+        assertThat(saved.name()).isEqualTo("Teriyaki Salmon");
+        assertThat(saved.revision()).isEqualTo(1);
+
+        service.addMeal(first);
+        assertThat(templates.count()).isEqualTo(1);
+
+        var changed = new MealRequest(
+                "Teriyaki Salmon", "Salmon with brown rice", "Seafood", "012-A",
+                "310012345678", "https://suvie.com/m/012-A", 1,
+                525, 44, 31, 18, 850, "/front-v2.jpg", "/back-v2.jpg", "PHOTO");
+        service.addMeal(changed);
+
+        var latest = templateService.lookup("https://suvie.com/m/012-A");
+        assertThat(latest.revision()).isEqualTo(2);
+        assertThat(latest.description()).isEqualTo("Salmon with brown rice");
+        assertThat(latest.caloriesPerServing()).isEqualTo(525);
+        assertThat(templates.count()).isEqualTo(2);
+        assertThat(templates.findAll()).filteredOn(template -> template.isActive()).hasSize(1);
+    }
+
     private MealRequest request(String name, int quantity) {
-        return new MealRequest(name, null, null, quantity, 500, 40, 30, 20, 700, null, null, "TEST");
+        return new MealRequest(name, null, null, null, null, null, quantity,
+                500, 40, 30, 20, 700, null, null, "TEST");
     }
 }

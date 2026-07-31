@@ -13,6 +13,12 @@ import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "meals")
+/**
+ * Persistent inventory row for one normalized meal name.
+ *
+ * <p>Nutrition values are stored per serving, while {@code quantity} counts
+ * two-serving boxes.</p>
+ */
 public class Meal {
     @Id
     private UUID id;
@@ -25,6 +31,13 @@ public class Meal {
 
     private String description;
     private String category;
+    private String cookingMealCode;
+
+    @Column(length = 512)
+    private String frontBarcodePayload;
+
+    @Column(length = 2048)
+    private String backQrPayload;
 
     @Column(nullable = false)
     private int quantity;
@@ -47,8 +60,10 @@ public class Meal {
     @Column(nullable = false)
     private Instant updatedAt;
 
+    /** Creates an empty JPA entity. */
     public Meal() {}
 
+    /** Initializes identifiers, timestamps, normalized name, and MVP defaults. */
     @PrePersist
     void prePersist() {
         if (id == null) id = UUID.randomUUID();
@@ -59,12 +74,19 @@ public class Meal {
         if (source == null || source.isBlank()) source = "MANUAL";
     }
 
+    /** Refreshes derived name and timestamp fields before an update. */
     @PreUpdate
     void preUpdate() {
         updatedAt = Instant.now();
         normalizedName = normalize(name);
     }
 
+    /**
+     * Produces the canonical key used to consolidate duplicate meal names.
+     *
+     * @param value user-visible meal name
+     * @return lowercase, alphanumeric, whitespace-normalized name
+     */
     public static String normalize(String value) {
         if (value == null) return "";
         return value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", " ").trim().replaceAll("\\s+", " ");
@@ -80,6 +102,12 @@ public class Meal {
     public void setDescription(String description) { this.description = description; }
     public String getCategory() { return category; }
     public void setCategory(String category) { this.category = category; }
+    public String getCookingMealCode() { return cookingMealCode; }
+    public void setCookingMealCode(String cookingMealCode) { this.cookingMealCode = cookingMealCode; }
+    public String getFrontBarcodePayload() { return frontBarcodePayload; }
+    public void setFrontBarcodePayload(String frontBarcodePayload) { this.frontBarcodePayload = frontBarcodePayload; }
+    public String getBackQrPayload() { return backQrPayload; }
+    public void setBackQrPayload(String backQrPayload) { this.backQrPayload = backQrPayload; }
     public int getQuantity() { return quantity; }
     public void setQuantity(int quantity) { this.quantity = quantity; }
     public int getServings() { return servings; }

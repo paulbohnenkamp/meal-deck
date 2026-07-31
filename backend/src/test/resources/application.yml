@@ -1,4 +1,9 @@
 spring:
+  ai:
+    openai:
+      # Allows Spring AI auto-configuration to start in tests without a real secret.
+      # Extraction services still see an empty mealdeck.openai.api-key and remain disabled.
+      api-key: test-not-used
   datasource:
     url: jdbc:h2:mem:mealdeck-test;DB_CLOSE_DELAY=-1
   jpa:

@@ -1,6 +1,22 @@
 spring:
   application:
     name: mealdeck-api
+  ai:
+    model:
+      chat: openai
+      embedding: none
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+    openai:
+      # A non-secret placeholder lets local mode boot without provider credentials.
+      # The extraction service rejects requests until OPENAI_API_KEY is configured.
+      api-key: ${OPENAI_API_KEY:not-configured}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-5.6-sol}
   datasource:
     url: jdbc:h2:file:./data/mealdeck;AUTO_SERVER=TRUE
     username: sa

@@ -14,14 +14,19 @@ MealDeck helps a two-person household keep an accurate freezer inventory of prep
 6. Undoing history restores one box.
 7. Never embed OCR/LLM provider secrets in the Expo client.
 8. The local data store must remain functional when no API URL is configured.
+9. Cooking codes are strings and must preserve leading zeroes, case, and punctuation.
+10. Shipment confirmation must prevalidate every row, update inventory atomically, and be
+    idempotent by order ID.
 
 ## Architecture
 
 - `mobile/`: Expo SDK 57, React 19, React Native 0.86, TypeScript.
-- `backend/`: Spring Boot 4.1, Java 21, Spring MVC, JPA, H2.
+- `backend/`: Spring Boot 4.1, Spring AI 2.0, Java 21, Spring MVC, JPA, H2.
 - `mobile/src/data.ts`: selects server mode only when `EXPO_PUBLIC_API_URL` exists.
 - `mobile/src/localStore.ts`: local/offline behavior and must mirror server semantics.
 - `backend/.../MealDeckService.java`: owns inventory/history transaction rules.
+- `backend/.../ShipmentService.java`: owns atomic shipment confirmation and idempotency.
+- `backend/.../MealTemplateService.java`: owns reusable immutable template revisions.
 
 ## Development rules
 
@@ -37,6 +42,7 @@ MealDeck helps a two-person household keep an accurate freezer inventory of prep
 
 ```bash
 cd mobile && npm run typecheck
+cd mobile && npm test
 cd mobile && npx expo export --platform web
 cd backend && ../mvnw test
 ```

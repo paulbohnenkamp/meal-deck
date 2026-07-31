@@ -1,24 +1,25 @@
 package app.mealdeck.service;
 
 import java.io.IOException;
-import java.util.Base64;
-import java.util.List;
-import java.util.Map;
 
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.content.Media;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
+import org.springframework.util.MimeType;
+import org.springframework.util.MimeTypeUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
 import app.mealdeck.dto.MealExtractionResponse;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 @Service
+/**
+ * Uses Spring AI multimodal chat to extract structured meal-card data.
+ */
 public class OpenAiMealExtractionService implements MealExtractionService {
     private static final String PROMPT = """
             Extract one prepared meal from these two images. The first is the meal-card front;
@@ -26,54 +27,74 @@ public class OpenAiMealExtractionService implements MealExtractionService {
             Nutrition must be per serving, never whole-package totals. Use null when unreadable.
             Description should be a short factual meal overview. Category should be a short
             useful grouping such as Chicken, Beef, Seafood, Pasta, or Vegetarian.
+            Read the printed appliance cooking meal code independently from the bottom of the
+            front card and from the cooking-guide back. Preserve every character, including
+            leading zeroes, letters, punctuation, and capitalization. Set frontCookingMealCode
+            and backCookingMealCode to their respective visible values. Set cookingMealCode only
+            when both readable values match exactly or only one side is readable; otherwise use
+            null so the user must resolve the conflict. Do not infer codes from meal names.
+            Set frontBarcodePayload and backQrPayload to null; native barcode decoding supplies
+            those fields separately.
             """;
 
-    private final RestClient client;
-    private final ObjectMapper objectMapper;
+    private final ChatClient chatClient;
+    private final BarcodeDecoder barcodeDecoder;
     private final String apiKey;
     private final String model;
 
+    /**
+     * Creates the OpenAI-backed extractor.
+     *
+     * @param chatClientBuilder auto-configured Spring AI client builder
+     * @param barcodeDecoder native card-identifier decoder
+     * @param apiKey configured provider credential, used to detect disabled extraction
+     * @param model OpenAI model used for multimodal extraction
+     */
     public OpenAiMealExtractionService(
-            ObjectMapper objectMapper,
+            ChatClient.Builder chatClientBuilder,
+            BarcodeDecoder barcodeDecoder,
             @Value("${mealdeck.openai.api-key:}") String apiKey,
             @Value("${mealdeck.openai.model:gpt-5.6-sol}") String model) {
-        this.client = RestClient.create("https://api.openai.com/v1");
-        this.objectMapper = objectMapper;
+        this.chatClient = chatClientBuilder.build();
+        this.barcodeDecoder = barcodeDecoder;
         this.apiKey = apiKey;
         this.model = model;
     }
 
     @Override
+    /**
+     * Sends both images in one non-stored request and maps native structured
+     * output into a review DTO.
+     *
+     * @param front meal-card front photo
+     * @param back cooking-guide back photo
+     * @return extracted visible fields and per-serving nutrition
+     */
     public MealExtractionResponse extract(MultipartFile front, MultipartFile back) {
         if (apiKey.isBlank()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Photo extraction is not configured. Set OPENAI_API_KEY on the backend.");
         }
         try {
-            Map<String, Object> body = Map.of(
-                    "model", model,
-                    "store", false,
-                    "input", List.of(Map.of(
-                            "role", "user",
-                            "content", List.of(
-                                    Map.of("type", "input_text", "text", PROMPT),
-                                    image(front),
-                                    image(back)))),
-                    "text", Map.of("format", Map.of(
-                            "type", "json_schema",
-                            "name", "meal_extraction",
-                            "strict", true,
-                            "schema", schema())));
-
-            JsonNode response = client.post()
-                    .uri("/responses")
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .body(JsonNode.class);
-            String json = outputText(response);
-            return objectMapper.readValue(json, MealExtractionResponse.class);
+            Media frontImage = image(front);
+            Media backImage = image(back);
+            MealExtractionResponse response = chatClient.prompt()
+                    .options(OpenAiChatOptions.builder()
+                            .model(model)
+                            .store(false))
+                    .user(user -> user
+                            .text(PROMPT)
+                            .media(frontImage, backImage))
+                    .call()
+                    .entity(MealExtractionResponse.class,
+                            options -> options.useProviderStructuredOutput());
+            if (response == null) {
+                throw new IllegalStateException("Empty extraction response");
+            }
+            return withMachineIdentifiers(
+                    response,
+                    barcodeDecoder.decodeFrontBarcode(front),
+                    barcodeDecoder.decodeBackQr(back));
         } catch (ResponseStatusException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -82,41 +103,36 @@ public class OpenAiMealExtractionService implements MealExtractionService {
         }
     }
 
-    private Map<String, Object> image(MultipartFile file) throws IOException {
-        String type = file.getContentType() == null ? "image/jpeg" : file.getContentType();
-        return Map.of(
-                "type", "input_image",
-                "detail", "high",
-                "image_url", "data:" + type + ";base64," + Base64.getEncoder().encodeToString(file.getBytes()));
+    private MealExtractionResponse withMachineIdentifiers(
+            MealExtractionResponse response,
+            String frontBarcodePayload,
+            String backQrPayload) {
+        return new MealExtractionResponse(
+                response.name(),
+                response.description(),
+                response.category(),
+                response.frontCookingMealCode(),
+                response.backCookingMealCode(),
+                response.cookingMealCode(),
+                frontBarcodePayload,
+                backQrPayload,
+                response.caloriesPerServing(),
+                response.carbsPerServing(),
+                response.proteinPerServing(),
+                response.fatPerServing(),
+                response.sodiumMgPerServing());
     }
 
-    private String outputText(JsonNode response) {
-        if (response == null) throw new IllegalStateException("Empty extraction response");
-        for (JsonNode output : response.path("output")) {
-            if (!"message".equals(output.path("type").asText())) continue;
-            for (JsonNode content : output.path("content")) {
-                if ("output_text".equals(content.path("type").asText())) return content.path("text").asText();
+    private Media image(MultipartFile file) throws IOException {
+        MimeType mimeType = file.getContentType() == null
+                ? MimeTypeUtils.IMAGE_JPEG
+                : MimeTypeUtils.parseMimeType(file.getContentType());
+        ByteArrayResource resource = new ByteArrayResource(file.getBytes()) {
+            @Override
+            public String getFilename() {
+                return file.getOriginalFilename();
             }
-        }
-        throw new IllegalStateException("Extraction response did not contain output text");
-    }
-
-    private Map<String, Object> schema() {
-        Map<String, Object> nullableString = Map.of("type", List.of("string", "null"));
-        Map<String, Object> nullableInteger = Map.of("type", List.of("integer", "null"));
-        return Map.of(
-                "type", "object",
-                "additionalProperties", false,
-                "properties", Map.of(
-                        "name", nullableString,
-                        "description", nullableString,
-                        "category", nullableString,
-                        "caloriesPerServing", nullableInteger,
-                        "carbsPerServing", nullableInteger,
-                        "proteinPerServing", nullableInteger,
-                        "fatPerServing", nullableInteger,
-                        "sodiumMgPerServing", nullableInteger),
-                "required", List.of("name", "description", "category", "caloriesPerServing",
-                        "carbsPerServing", "proteinPerServing", "fatPerServing", "sodiumMgPerServing"));
+        };
+        return new Media(mimeType, resource);
     }
 }
