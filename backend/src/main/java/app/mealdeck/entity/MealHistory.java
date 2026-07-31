@@ -11,6 +11,12 @@ import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "meal_history")
+/**
+ * Persistent snapshot of a consumed meal.
+ *
+ * <p>The name, servings, and carbohydrate values remain unchanged if the
+ * corresponding inventory meal is later edited.</p>
+ */
 public class MealHistory {
     @Id
     private UUID id;
@@ -31,8 +37,10 @@ public class MealHistory {
     @Column(nullable = false)
     private Instant consumedAt;
 
+    /** Creates an empty JPA entity. */
     public MealHistory() {}
 
+    /** Initializes the identifier and consumption timestamp when absent. */
     @PrePersist
     void prePersist() {
         if (id == null) id = UUID.randomUUID();

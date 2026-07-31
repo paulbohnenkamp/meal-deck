@@ -6,7 +6,12 @@ import app.mealdeck.dto.HistoryResponse;
 import app.mealdeck.entity.MealHistory;
 
 @Component
+/** Maps persistent history snapshots to immutable API responses. */
 public class HistoryMapper {
+    /**
+     * @param history persisted history snapshot
+     * @return client-facing history representation
+     */
     public HistoryResponse toResponse(MealHistory history) {
         return new HistoryResponse(
                 history.getId(),

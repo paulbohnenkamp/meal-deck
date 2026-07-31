@@ -1,3 +1,4 @@
+/** Shared semantic color palette used throughout the MealDeck interface. */
 export const colors = {
   background: '#F7F7F2',
   surface: '#FFFFFF',

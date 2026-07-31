@@ -25,6 +25,9 @@ Avoid gamified food-app styling, decorative restaurant imagery, novelty interact
 - Make inventory consequences explicit before repeated or destructive actions.
 - Keep the dinner decision fast while preserving user control.
 - Put carb and serving information where decisions happen.
+- Treat the cooking code as appliance-operating information and keep it prominent.
+- Keep card identifiers distinct until the user has reviewed them.
+- Exclude shipping details when a cropped packing-slip item table is sufficient.
 - Prefer familiar controls and plain language over novelty.
 - Keep local and server experiences behaviorally consistent.
 

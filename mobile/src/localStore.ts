@@ -1,15 +1,55 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Dashboard, HistoryEntry, Meal, MealInput, PickResult } from './types';
+import {
+  Dashboard,
+  HistoryEntry,
+  Meal,
+  MealInput,
+  MealTemplate,
+  PickResult,
+  ShipmentConfirmation,
+  ShipmentConfirmationResult
+} from './types';
 
 const MEALS_KEY = 'mealdeck.meals.v1';
 const HISTORY_KEY = 'mealdeck.history.v1';
 const STATE_KEY = 'mealdeck.state.v2';
 
-type LocalState = { meals: Meal[]; history: HistoryEntry[] };
+/** Atomically persisted offline inventory and history document. */
+type LocalState = {
+  meals: Meal[];
+  history: HistoryEntry[];
+  templates: MealTemplate[];
+  shipments: Array<{ orderId: string; confirmedAt: string }>;
+};
 
 const now = () => new Date().toISOString();
 const id = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+
+/** Converts an identifier-bearing legacy inventory row into a reusable template. */
+function templateFromMeal(meal: Meal): MealTemplate | null {
+  if (!meal.cookingMealCode && !meal.frontBarcodePayload && !meal.backQrPayload) return null;
+  return {
+    id: id(),
+    provider: 'SUVIE',
+    revision: 1,
+    active: true,
+    cookingMealCode: meal.cookingMealCode,
+    frontBarcodePayload: meal.frontBarcodePayload,
+    backQrPayload: meal.backQrPayload,
+    name: meal.name,
+    description: meal.description,
+    category: meal.category,
+    caloriesPerServing: meal.caloriesPerServing,
+    carbsPerServing: meal.carbsPerServing,
+    proteinPerServing: meal.proteinPerServing,
+    fatPerServing: meal.fatPerServing,
+    sodiumMgPerServing: meal.sodiumMgPerServing,
+    imageUrl: meal.imageUrl,
+    cookingGuideImageUrl: meal.cookingGuideImageUrl,
+    verifiedAt: meal.updatedAt
+  };
+}
 
 const seed: Meal[] = [
   {
@@ -31,31 +71,51 @@ const seed: Meal[] = [
 
 let operationQueue = Promise.resolve();
 
+/**
+ * Serializes local mutations so inventory and history remain one logical
+ * transaction even when UI actions overlap.
+ */
 function serialized<T>(operation: () => Promise<T>): Promise<T> {
   const result = operationQueue.then(operation, operation);
   operationQueue = result.then(() => undefined, () => undefined);
   return result;
 }
 
+/** Reads current state and migrates the original split-key storage format. */
 async function readState(): Promise<LocalState> {
   const raw = await AsyncStorage.getItem(STATE_KEY);
-  if (raw) return JSON.parse(raw) as LocalState;
+  if (raw) {
+    const stored = JSON.parse(raw) as Omit<LocalState, 'templates' | 'shipments'> & {
+      templates?: MealTemplate[];
+      shipments?: Array<{ orderId: string; confirmedAt: string }>;
+    };
+    return {
+      ...stored,
+      templates: stored.templates
+        ?? stored.meals.map(templateFromMeal).filter((value): value is MealTemplate => value != null),
+      shipments: stored.shipments ?? []
+    };
+  }
 
   const legacy = await AsyncStorage.multiGet([MEALS_KEY, HISTORY_KEY]);
   const legacyMeals = legacy[0][1];
   const legacyHistory = legacy[1][1];
   const state: LocalState = {
     meals: legacyMeals ? JSON.parse(legacyMeals) as Meal[] : seed.map(meal => ({ ...meal })),
-    history: legacyHistory ? JSON.parse(legacyHistory) as HistoryEntry[] : []
+    history: legacyHistory ? JSON.parse(legacyHistory) as HistoryEntry[] : [],
+    templates: [],
+    shipments: []
   };
   await writeState(state);
   return state;
 }
 
+/** Persists inventory and history together as one state document. */
 async function writeState(state: LocalState) {
   await AsyncStorage.setItem(STATE_KEY, JSON.stringify(state));
 }
 
+/** Applies the atomic inventory decrement and history insertion in memory. */
 function consumeState(state: LocalState, mealId: string, avoidDays: number): PickResult {
   const meal = state.meals.find(item => item.id === mealId);
   if (!meal || meal.quantity <= 0) throw new Error('That meal is out of stock.');
@@ -69,6 +129,68 @@ function consumeState(state: LocalState, mealId: string, avoidDays: number): Pic
   return { meal, history: entry, avoidDays };
 }
 
+/** Stores a new local template revision when reviewed meal fields changed. */
+function rememberTemplate(state: LocalState, input: MealInput) {
+  const identifiers = [
+    input.cookingMealCode,
+    input.frontBarcodePayload,
+    input.backQrPayload
+  ].map(value => value?.trim()).filter((value): value is string => Boolean(value));
+  if (!identifiers.length) return;
+  const current = state.templates.find(template => template.active !== false && identifiers.some(
+    value => value === template.cookingMealCode
+      || value === template.frontBarcodePayload
+      || value === template.backQrPayload
+  ));
+  const definition = {
+    cookingMealCode: input.cookingMealCode,
+    frontBarcodePayload: input.frontBarcodePayload,
+    backQrPayload: input.backQrPayload,
+    name: input.name.trim(),
+    description: input.description,
+    category: input.category,
+    caloriesPerServing: input.caloriesPerServing,
+    carbsPerServing: input.carbsPerServing,
+    proteinPerServing: input.proteinPerServing,
+    fatPerServing: input.fatPerServing,
+    sodiumMgPerServing: input.sodiumMgPerServing,
+    imageUrl: input.imageUrl,
+    cookingGuideImageUrl: input.cookingGuideImageUrl
+  };
+  if (current && templateDefinition(current) === JSON.stringify(definition)) return;
+  if (current) current.active = false;
+  state.templates.push({
+    ...definition,
+    id: id(),
+    provider: 'SUVIE',
+    revision: current ? current.revision + 1 : 1,
+    active: true,
+    verifiedAt: now()
+  });
+}
+
+function templateDefinition(template: MealTemplate) {
+  return JSON.stringify({
+    cookingMealCode: template.cookingMealCode,
+    frontBarcodePayload: template.frontBarcodePayload,
+    backQrPayload: template.backQrPayload,
+    name: template.name,
+    description: template.description,
+    category: template.category,
+    caloriesPerServing: template.caloriesPerServing,
+    carbsPerServing: template.carbsPerServing,
+    proteinPerServing: template.proteinPerServing,
+    fatPerServing: template.fatPerServing,
+    sodiumMgPerServing: template.sodiumMgPerServing,
+    imageUrl: template.imageUrl,
+    cookingGuideImageUrl: template.cookingGuideImageUrl
+  });
+}
+
+/**
+ * Offline implementation of the MealDeck data contract, including normalized
+ * duplicate consolidation, strict random eligibility, and one-box undo.
+ */
 export const localStore = {
   async listMeals() {
     return serialized(async () => (await readState()).meals.sort((a, b) => a.name.localeCompare(b.name)));
@@ -86,11 +208,13 @@ export const localStore = {
           createdAt: existing.createdAt,
           updatedAt: now()
         });
+        rememberTemplate(state, input);
         await writeState(state);
         return existing;
       }
       const meal: Meal = { ...input, id: id(), servings: 2, createdAt: now(), updatedAt: now() };
       state.meals.push(meal);
+      rememberTemplate(state, input);
       await writeState(state);
       return meal;
     });
@@ -102,6 +226,7 @@ export const localStore = {
       const index = state.meals.findIndex(meal => meal.id === mealId);
       if (index < 0) throw new Error('Meal not found');
       state.meals[index] = { ...state.meals[index], ...input, id: mealId, servings: 2, updatedAt: now() };
+      rememberTemplate(state, input);
       await writeState(state);
       return state.meals[index];
     });
@@ -112,6 +237,84 @@ export const localStore = {
       const state = await readState();
       state.meals = state.meals.filter(meal => meal.id !== mealId);
       await writeState(state);
+    });
+  },
+
+  async lookupTemplate(identifier: string): Promise<MealTemplate> {
+    return serialized(async () => {
+      const value = identifier.trim();
+      const template = (await readState()).templates.find(item =>
+        item.active !== false && (
+          item.cookingMealCode === value
+          || item.frontBarcodePayload === value
+          || item.backQrPayload === value
+        ));
+      if (!template) throw new Error('No reviewed meal template matches that identifier.');
+      return template;
+    });
+  },
+
+  async confirmShipment(request: ShipmentConfirmation): Promise<ShipmentConfirmationResult> {
+    return serialized(async () => {
+      const state = await readState();
+      const orderId = request.orderId.trim();
+      if (!orderId) throw new Error('Order ID is required.');
+      if (state.shipments.some(shipment => shipment.orderId === orderId)) {
+        throw new Error('That shipment has already been confirmed.');
+      }
+      const resolved = request.lines.map(line => {
+        if (!Number.isInteger(line.quantity) || line.quantity < 1) {
+          throw new Error('Every shipment quantity must be at least one box.');
+        }
+        const template = state.templates.find(item =>
+          item.id === line.templateId && item.active !== false);
+        if (!template) throw new Error('Every shipment row must reference an active reviewed template.');
+        if (line.itemCode && ![
+          template.cookingMealCode,
+          template.frontBarcodePayload,
+          template.backQrPayload
+        ].includes(line.itemCode)) {
+          throw new Error('A shipment item code no longer matches its reviewed template.');
+        }
+        return { template, quantity: line.quantity };
+      });
+      if (!resolved.length) throw new Error('Shipment lines are required.');
+
+      const quantities = new Map<string, { template: MealTemplate; quantity: number }>();
+      for (const line of resolved) {
+        const key = normalize(line.template.name);
+        const current = quantities.get(key);
+        quantities.set(key, {
+          template: line.template,
+          quantity: line.quantity + (current?.quantity ?? 0)
+        });
+      }
+      const updated: Meal[] = [];
+      for (const { template, quantity } of quantities.values()) {
+        const existing = state.meals.find(meal => normalize(meal.name) === normalize(template.name));
+        const timestamp = now();
+        const values: Meal = {
+          ...template,
+          id: existing?.id ?? id(),
+          quantity: (existing?.quantity ?? 0) + quantity,
+          servings: 2,
+          source: 'SHIPMENT',
+          createdAt: existing?.createdAt ?? timestamp,
+          updatedAt: timestamp
+        };
+        if (existing) Object.assign(existing, values);
+        else state.meals.push(values);
+        updated.push(values);
+      }
+      const confirmedAt = now();
+      state.shipments.push({ orderId, confirmedAt });
+      await writeState(state);
+      return {
+        orderId,
+        totalBoxes: resolved.reduce((sum, line) => sum + line.quantity, 0),
+        meals: updated,
+        confirmedAt
+      };
     });
   },
 

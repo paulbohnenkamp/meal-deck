@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
+/** Converts MealDeck domain exceptions into RFC 9457 HTTP problem details. */
 public class GlobalExceptionHandler {
     @ExceptionHandler({MealNotFoundException.class, HistoryNotFoundException.class})
     ProblemDetail handleNotFound(RuntimeException exception) {

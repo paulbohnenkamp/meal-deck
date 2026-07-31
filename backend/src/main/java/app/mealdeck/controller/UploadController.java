@@ -22,15 +22,29 @@ import app.mealdeck.dto.UploadResponse;
 
 @RestController
 @RequestMapping("/api/uploads")
+/**
+ * Validates and stores meal photos on the backend filesystem.
+ */
 public class UploadController {
     private static final Set<String> ALLOWED = Set.of("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif");
     private final Path uploadDirectory;
 
+    /**
+     * Creates an upload controller rooted at the configured directory.
+     *
+     * @param uploadDirectory filesystem directory for uploaded images
+     */
     public UploadController(@Value("${mealdeck.upload-dir:./data/uploads}") String uploadDirectory) {
         this.uploadDirectory = Paths.get(uploadDirectory).toAbsolutePath().normalize();
     }
 
     @PostMapping
+    /**
+     * Stores a supported image and returns its public application path.
+     *
+     * @param file image submitted as multipart form data
+     * @return public URL path for the stored image
+     */
     public UploadResponse upload(@RequestPart("file") MultipartFile file) {
         if (file.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a photo first");
         String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.web.MockMultipartFile;
 
+/** Verifies upload validation and filesystem storage behavior. */
 class UploadControllerTest {
     @TempDir
     Path uploadDirectory;
