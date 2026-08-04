@@ -4,7 +4,7 @@ package app.mealdeck.dto;
  * Reviewable fields extracted from meal-card photos.
  *
  * @param name visible meal name
- * @param description short factual meal description
+ * @param sides printed side dishes without the leading word "with"
  * @param category useful meal grouping
  * @param frontCookingMealCode cooking code printed on the front card
  * @param backCookingMealCode cooking code printed on the cooking-guide back
@@ -21,7 +21,7 @@ package app.mealdeck.dto;
  */
 public record MealExtractionResponse(
         String name,
-        String description,
+        String sides,
         String category,
         String frontCookingMealCode,
         String backCookingMealCode,

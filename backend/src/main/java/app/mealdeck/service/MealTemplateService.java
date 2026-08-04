@@ -114,7 +114,7 @@ public class MealTemplateService {
         template.setFrontBarcodePayload(clean(request.frontBarcodePayload()));
         template.setBackQrPayload(clean(request.backQrPayload()));
         template.setName(request.name().trim());
-        template.setDescription(request.description());
+        template.setSides(request.sides());
         template.setCategory(request.category());
         template.setCaloriesPerServing(request.caloriesPerServing());
         template.setCarbsPerServing(request.carbsPerServing());
@@ -130,7 +130,7 @@ public class MealTemplateService {
                 && Objects.equals(value.getFrontBarcodePayload(), clean(request.frontBarcodePayload()))
                 && Objects.equals(value.getBackQrPayload(), clean(request.backQrPayload()))
                 && Objects.equals(value.getName(), request.name().trim())
-                && Objects.equals(value.getDescription(), request.description())
+                && Objects.equals(value.getSides(), request.sides())
                 && Objects.equals(value.getCategory(), request.category())
                 && Objects.equals(value.getCaloriesPerServing(), request.caloriesPerServing())
                 && Objects.equals(value.getCarbsPerServing(), request.carbsPerServing())
@@ -145,7 +145,7 @@ public class MealTemplateService {
         return new MealTemplateResponse(
                 value.getId(), value.getProvider(), value.getRevision(),
                 value.getCookingMealCode(), value.getFrontBarcodePayload(), value.getBackQrPayload(),
-                value.getName(), value.getDescription(), value.getCategory(),
+                value.getName(), value.getSides(), value.getCategory(),
                 value.getCaloriesPerServing(), value.getCarbsPerServing(),
                 value.getProteinPerServing(), value.getFatPerServing(),
                 value.getSodiumMgPerServing(), value.getImageUrl(),

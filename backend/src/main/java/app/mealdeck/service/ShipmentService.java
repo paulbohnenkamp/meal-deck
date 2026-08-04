@@ -120,7 +120,7 @@ public class ShipmentService {
         Meal meal = meals.findByNormalizedName(normalized).orElseGet(Meal::new);
         boolean existing = meal.getId() != null;
         meal.setName(template.getName());
-        meal.setDescription(template.getDescription());
+        meal.setSides(template.getSides());
         meal.setCategory(template.getCategory());
         meal.setCookingMealCode(template.getCookingMealCode());
         meal.setFrontBarcodePayload(template.getFrontBarcodePayload());

@@ -19,7 +19,7 @@ A working MVP for photographing prepared meal cards, tracking freezer inventory,
 - Inventory decrement only after the user accepts a draw
 - Manual “Eat this” flow
 - Dinner history and undo
-- Sample meals so the first launch is not empty
+- Empty first-launch inventory with a clear path to add the first meal
 - Backend service tests and mobile TypeScript checks
 
 ## Repository layout
@@ -68,6 +68,41 @@ cd mobile
 npm install
 npm run ios
 ```
+
+To start the backend and iOS app, then import the private, gitignored HEIC evaluation set into
+the Simulator's Photos library, run this from the repository root:
+
+```bash
+./scripts/ios-simulator-test.sh --images all
+```
+
+For easier front/back pairing, pass one three-digit sample folder. Only that pair is imported,
+and it appears as the two newest photos:
+
+```bash
+./scripts/ios-simulator-test.sh --images 001
+```
+
+To start cleanly without adding anything to the Simulator's existing photo library:
+
+```bash
+./scripts/ios-simulator-test.sh --images none
+```
+
+While MealDeck remains running, import the next pair from a second terminal without restarting
+the app or backend:
+
+```bash
+./scripts/ios-import-sample.sh 002
+```
+
+The script safely stops existing MealDeck-owned listeners on ports 8080 and 8081, starts a fresh
+backend and frontend, boots a simulator, calls `simctl addmedia`, and then runs Expo in the
+foreground so version-install prompts remain interactive. It refuses to stop a process on either
+port when that process belongs to another project.
+Export `OPENAI_API_KEY` in the terminal first to enable photo extraction. Re-running the script
+imports another copy of each image, so use it once per freshly reset simulator unless duplicates
+are useful for testing.
 
 You can also run `npm start` and use an Expo development build. SDK 57 projects may not run in the public App Store version of Expo Go; a simulator or Expo development build is the reliable path.
 

@@ -13,7 +13,7 @@ import java.util.UUID;
  * @param frontBarcodePayload raw front-barcode payload
  * @param backQrPayload raw back-QR payload
  * @param name meal name
- * @param description meal overview
+ * @param sides printed side dishes without the leading word "with"
  * @param category meal grouping
  * @param caloriesPerServing calories per serving
  * @param carbsPerServing carbohydrates per serving
@@ -32,7 +32,7 @@ public record MealTemplateResponse(
         String frontBarcodePayload,
         String backQrPayload,
         String name,
-        String description,
+        String sides,
         String category,
         Integer caloriesPerServing,
         Integer carbsPerServing,

@@ -17,6 +17,12 @@ public interface MealRepository extends JpaRepository<Meal, UUID> {
     Optional<Meal> findByNormalizedName(String normalizedName);
 
     /**
+     * @param cookingMealCode exact provider cooking identifier
+     * @return inventory row already associated with that code
+     */
+    Optional<Meal> findFirstByCookingMealCode(String cookingMealCode);
+
+    /**
      * @param quantity exclusive lower inventory bound
      * @return matching meals ordered by display name
      */

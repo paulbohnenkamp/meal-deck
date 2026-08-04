@@ -22,7 +22,6 @@ import { StatusBar } from 'expo-status-bar';
 import {
   Card,
   CookingCode,
-  MachineIdentifiers,
   MealImage,
   NutritionRow,
   Pill,
@@ -45,7 +44,7 @@ type Tab = 'home' | 'inventory' | 'add' | 'history';
 /** Editable meal form, including both temporary captured-photo representations. */
 type FormState = {
   name: string;
-  description: string;
+  sides: string;
   category: string;
   cookingMealCode: string;
   frontCookingMealCode: string;
@@ -71,8 +70,26 @@ type FormState = {
   backImageName?: string;
 };
 
+/** Inventory fields editable without rescanning the source meal card. */
+type EditFormState = {
+  name: string;
+  sides: string;
+  category: string;
+  cookingMealCode: string;
+  frontBarcodePayload: string;
+  backQrPayload: string;
+  quantity: string;
+  calories: string;
+  carbs: string;
+  protein: string;
+  fat: string;
+  sodium: string;
+  imageUrl: string;
+  cookingGuideImageUrl: string;
+};
+
 const emptyForm: FormState = {
-  name: '', description: '', category: '', cookingMealCode: '',
+  name: '', sides: '', category: '', cookingMealCode: '',
   frontCookingMealCode: '', backCookingMealCode: '', frontBarcodePayload: '',
   backQrPayload: '', machineIdentifiersReviewed: true, calories: '', carbs: '',
   protein: '', fat: '', sodium: '', frontImageUri: '', backImageUri: '',
@@ -101,6 +118,8 @@ export default function App() {
   const [packingManifest, setPackingManifest] = useState<PackingSlipManifest | null>(null);
   const [packingBusy, setPackingBusy] = useState(false);
   const [shipmentBusy, setShipmentBusy] = useState(false);
+  const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
+  const [editForm, setEditForm] = useState<EditFormState | null>(null);
 
   const refresh = useCallback(async (manual = false) => {
     manual ? setRefreshing(true) : setLoading(true);
@@ -143,15 +162,14 @@ export default function App() {
       setForm(current => ({
         ...current,
         name: extraction.name ?? '',
-        description: extraction.description ?? '',
+        sides: extraction.sides ?? '',
         category: extraction.category ?? '',
         cookingMealCode: cookingCode.cookingMealCode,
         frontCookingMealCode: cookingCode.frontCookingMealCode,
         backCookingMealCode: cookingCode.backCookingMealCode,
         frontBarcodePayload: extraction.frontBarcodePayload ?? '',
         backQrPayload: extraction.backQrPayload ?? '',
-        machineIdentifiersReviewed:
-          !extraction.frontBarcodePayload && !extraction.backQrPayload,
+        machineIdentifiersReviewed: true,
         calories: valueText(extraction.caloriesPerServing),
         carbs: valueText(extraction.carbsPerServing),
         protein: valueText(extraction.proteinPerServing),
@@ -176,7 +194,7 @@ export default function App() {
       setForm({
         ...emptyForm,
         name: template.name,
-        description: template.description ?? '',
+        sides: template.sides ?? '',
         category: template.category ?? '',
         cookingMealCode: template.cookingMealCode ?? '',
         frontBarcodePayload: template.frontBarcodePayload ?? '',
@@ -310,7 +328,7 @@ export default function App() {
     if (!query) return meals;
     return meals.filter(meal => [
       meal.name,
-      meal.description,
+      meal.sides,
       meal.category,
       meal.cookingMealCode,
       meal.frontBarcodePayload,
@@ -381,6 +399,53 @@ export default function App() {
     }
   }
 
+  function beginEdit(meal: Meal) {
+    setEditingMeal(meal);
+    setEditForm(editFormFromMeal(meal));
+  }
+
+  async function saveEditedMeal() {
+    if (!editingMeal || !editForm) return;
+    const name = editForm.name.trim();
+    const quantity = Number(editForm.quantity);
+    if (!name) {
+      Alert.alert('Meal name required', 'Enter a name for this meal.');
+      return;
+    }
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      Alert.alert('Valid box count required', 'Box count must be a whole number of zero or more.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await data.updateMeal(editingMeal.id, {
+        name,
+        sides: clean(editForm.sides),
+        category: clean(editForm.category),
+        cookingMealCode: clean(editForm.cookingMealCode) ?? null,
+        frontBarcodePayload: clean(editForm.frontBarcodePayload) ?? null,
+        backQrPayload: clean(editForm.backQrPayload) ?? null,
+        quantity,
+        caloriesPerServing: numberOrNull(editForm.calories),
+        carbsPerServing: numberOrNull(editForm.carbs),
+        proteinPerServing: numberOrNull(editForm.protein),
+        fatPerServing: numberOrNull(editForm.fat),
+        sodiumMgPerServing: numberOrNull(editForm.sodium),
+        imageUrl: clean(editForm.imageUrl) ?? null,
+        cookingGuideImageUrl: clean(editForm.cookingGuideImageUrl) ?? null,
+        source: editingMeal.source ?? undefined
+      });
+      setEditingMeal(null);
+      setEditForm(null);
+      await refresh();
+      setNotice(`${name} was updated.`);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeMeal(meal: Meal) {
     if (!(await confirmAction(`Delete ${meal.name}?`, 'This removes every copy of this meal from inventory.'))) return;
     setBusy(true);
@@ -442,7 +507,7 @@ export default function App() {
       setExtractionError('');
       setForm(current => ({
         ...current,
-        name: '', description: '', category: '', cookingMealCode: '',
+        name: '', sides: '', category: '', cookingMealCode: '',
         frontCookingMealCode: '', backCookingMealCode: '',
         frontBarcodePayload: '', backQrPayload: '',
         machineIdentifiersReviewed: true,
@@ -515,7 +580,7 @@ export default function App() {
         : await savePhoto(form.backImageUri, form.backImageBase64, form.backImageMime, form.backImageName);
       const input: MealInput = {
         name: form.name.trim(),
-        description: clean(form.description),
+        sides: clean(form.sides),
         category: clean(form.category),
         cookingMealCode: form.cookingMealCode.trim(),
         frontBarcodePayload: clean(form.frontBarcodePayload),
@@ -586,6 +651,7 @@ export default function App() {
           {tab === 'inventory' && (
             <InventoryScreen
               meals={filteredMeals}
+              hasInventory={meals.length > 0}
               search={search}
               setSearch={setSearch}
               busy={busy}
@@ -593,6 +659,7 @@ export default function App() {
               onIncrement={meal => void adjustQuantity(meal, 1)}
               onDecrement={meal => void adjustQuantity(meal, -1)}
               onDelete={meal => void removeMeal(meal)}
+              onEdit={beginEdit}
               onAdd={() => setTab('add')}
               refreshing={refreshing}
               refresh={() => void refresh(true)}
@@ -636,6 +703,14 @@ export default function App() {
         close={() => setPicked(null)}
         confirm={() => void confirmDinner()}
         drawAgain={() => void drawAnotherDinner()}
+      />
+      <EditMealModal
+        meal={editingMeal}
+        form={editForm}
+        setForm={setEditForm}
+        busy={busy}
+        close={() => { setEditingMeal(null); setEditForm(null); }}
+        save={() => void saveEditedMeal()}
       />
       {busy && <View pointerEvents="none" style={styles.busyOverlay}><ActivityIndicator size="large" color={colors.accent} /></View>}
     </SafeAreaView>
@@ -714,10 +789,10 @@ function HomeScreen({ dashboard, history, meals, busy, onDraw, onRelaxedDraw, sh
 }
 
 /** Displays searchable inventory with quantity and consumption actions. */
-function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncrement, onDecrement, onDelete, onAdd, refreshing, refresh }: {
-  meals: Meal[]; search: string; setSearch: (value: string) => void; busy: boolean;
+function InventoryScreen({ meals, hasInventory, search, setSearch, busy, onConsume, onIncrement, onDecrement, onDelete, onEdit, onAdd, refreshing, refresh }: {
+  meals: Meal[]; hasInventory: boolean; search: string; setSearch: (value: string) => void; busy: boolean;
   onConsume: (meal: Meal) => void; onIncrement: (meal: Meal) => void; onDecrement: (meal: Meal) => void;
-  onDelete: (meal: Meal) => void; onAdd: () => void; refreshing: boolean; refresh: () => void;
+  onDelete: (meal: Meal) => void; onEdit: (meal: Meal) => void; onAdd: () => void; refreshing: boolean; refresh: () => void;
 }) {
   return (
     <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
@@ -735,13 +810,12 @@ function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncremen
                 <Text style={styles.cardTitle}>{meal.name}</Text>
                 <Pill tone={meal.quantity ? 'brand' : 'neutral'}>× {meal.quantity}</Pill>
               </View>
-              {meal.description ? <Text numberOfLines={2} style={styles.cardMuted}>{meal.description}</Text> : null}
+              {meal.sides ? <Text numberOfLines={2} style={styles.cardMuted}>with {meal.sides}</Text> : null}
               <View style={styles.inlinePills}>
                 {meal.category ? <Pill tone="neutral">{meal.category}</Pill> : null}
                 <Pill tone="mint">2 servings</Pill>
               </View>
               <CookingCode code={meal.cookingMealCode} compact />
-              <MachineIdentifiers meal={meal} />
             </View>
           </View>
           <NutritionRow meal={meal} />
@@ -754,13 +828,85 @@ function InventoryScreen({ meals, search, setSearch, busy, onConsume, onIncremen
             <Pressable disabled={busy || meal.quantity <= 0} onPress={() => onConsume(meal)} style={[styles.smallAction, meal.quantity <= 0 && styles.disabled]}>
               <Text style={styles.smallActionText}>Eat this</Text>
             </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${meal.name}`} disabled={busy} onPress={() => onEdit(meal)} style={styles.editAction}>
+              <Text style={styles.editText}>Edit</Text>
+            </Pressable>
             <Pressable disabled={busy} onPress={() => onDelete(meal)} style={styles.deleteAction}><Text style={styles.deleteText}>Delete</Text></Pressable>
           </View>
         </Card>
       )) : (
-        <Card><Text style={styles.emptyTitle}>No matching meals</Text><Text style={styles.cardMuted}>Add a meal or clear the search.</Text></Card>
+        <Card style={styles.emptyInventory}>
+          <Text style={styles.emptyTitle}>{hasInventory ? 'No matching meals' : 'Your freezer is empty'}</Text>
+          <Text style={styles.cardMuted}>
+            {hasInventory ? 'Clear the search to see your inventory.' : 'Add your first prepared meal or scan a packing slip to get started.'}
+          </Text>
+          {!hasInventory && <PrimaryButton label="Add your first meal" onPress={onAdd} />}
+        </Card>
       )}
     </ScrollView>
+  );
+}
+
+/** Edits every persisted inventory field while preserving the two-serving invariant. */
+function EditMealModal({ meal, form, setForm, busy, close, save }: {
+  meal: Meal | null;
+  form: EditFormState | null;
+  setForm: React.Dispatch<React.SetStateAction<EditFormState | null>>;
+  busy: boolean;
+  close: () => void;
+  save: () => void;
+}) {
+  if (!meal || !form) return null;
+  const field = (key: keyof EditFormState, value: string) =>
+    setForm(current => current ? { ...current, [key]: value } : current);
+  return (
+    <Modal visible animationType="slide" onRequestClose={close}>
+      <SafeAreaView style={styles.editScreen}>
+        <View style={styles.editHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.pageTitle}>Edit meal</Text>
+            <Text style={styles.pageSubtitle}>Nutrition values are per serving. Each box remains two servings.</Text>
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close meal editor" onPress={close} style={styles.modalClose}>
+            <Text style={styles.modalCloseText}>×</Text>
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.editContent} keyboardShouldPersistTaps="handled">
+          <Card>
+            <Field label="Meal name *" value={form.name} onChangeText={value => field('name', value)} />
+            <Field label="Sides" value={form.sides} onChangeText={value => field('sides', value)} multiline />
+            <Field label="Category" value={form.category} onChangeText={value => field('category', value)} />
+            <View style={styles.twoColumns}>
+              <Field compact label="Box count *" value={form.quantity} onChangeText={value => field('quantity', value)} keyboardType="number-pad" />
+              <View style={styles.servingInvariant}><Text style={styles.fieldLabel}>Servings per box</Text><Text style={styles.servingValue}>2</Text></View>
+            </View>
+          </Card>
+          <Card>
+            <Text style={styles.sectionTitle}>Cooking identifiers</Text>
+            <Field label="Cooking meal code" value={form.cookingMealCode} editable={false} />
+            <Text style={styles.fieldHelp}>The confirmed cooking code is the meal's read-only provider identifier.</Text>
+          </Card>
+          <Card>
+            <Text style={styles.sectionTitle}>Per serving</Text>
+            <View style={styles.twoColumns}>
+              <Field compact label="Carbs (g)" value={form.carbs} onChangeText={value => field('carbs', value)} keyboardType="number-pad" />
+              <Field compact label="Calories" value={form.calories} onChangeText={value => field('calories', value)} keyboardType="number-pad" />
+            </View>
+            <View style={styles.twoColumns}>
+              <Field compact label="Protein (g)" value={form.protein} onChangeText={value => field('protein', value)} keyboardType="number-pad" />
+              <Field compact label="Fat (g)" value={form.fat} onChangeText={value => field('fat', value)} keyboardType="number-pad" />
+            </View>
+            <Field label="Sodium (mg)" value={form.sodium} onChangeText={value => field('sodium', value)} keyboardType="number-pad" />
+          </Card>
+          <Card>
+            <Text style={styles.sectionTitle}>Stored photos</Text>
+            <Field label="Meal-card image URL" value={form.imageUrl} onChangeText={value => field('imageUrl', value)} autoCapitalize="none" autoCorrect={false} />
+            <Field label="Cooking-guide image URL" value={form.cookingGuideImageUrl} onChangeText={value => field('cookingGuideImageUrl', value)} autoCapitalize="none" autoCorrect={false} />
+          </Card>
+          <PrimaryButton label={busy ? 'Saving…' : 'Save changes'} onPress={save} disabled={busy} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -808,6 +954,7 @@ function AddScreen({
   onExtract: () => void;
   onSave: () => void;
 }) {
+  const [previewPhoto, setPreviewPhoto] = useState<{ uri: string; label: string } | null>(null);
   const field = <K extends keyof FormState,>(key: K, value: FormState[K]) =>
     setForm(current => ({ ...current, [key]: value }));
   const captureStep = photoCaptureStep(photoReady.front, photoReady.back);
@@ -829,7 +976,9 @@ function AddScreen({
           meals are already known.
         </Text>
         {packingSlip ? (
-          <Image source={{ uri: packingSlip.uri }} style={styles.photoPreview} resizeMode="cover" />
+          <Pressable accessibilityRole="button" accessibilityLabel="Open full packing slip preview" onPress={() => setPreviewPhoto({ uri: packingSlip.uri, label: 'Packing slip' })}>
+            <Image source={{ uri: packingSlip.uri }} style={styles.photoPreview} resizeMode="contain" />
+          </Pressable>
         ) : null}
         <View style={styles.templateActions}>
           <PrimaryButton
@@ -886,9 +1035,12 @@ function AddScreen({
       {!form.reusedTemplate && <Card style={styles.photoCard}>
         <Text style={styles.photoSideTitle}>1. Meal card · front</Text>
         <Text style={styles.cardMuted}>Meal overview, ingredients, and nutrition facts.</Text>
-        {form.frontImageUri ? <Image source={{ uri: form.frontImageUri }} style={styles.photoPreview} resizeMode="cover" onLoad={() => onPhotoReady('front')} onError={photoError} /> : (
+        {form.frontImageUri ? <Pressable accessibilityRole="button" accessibilityLabel="Open full meal-card front preview" onPress={() => setPreviewPhoto({ uri: form.frontImageUri, label: 'Meal-card front' })}>
+          <Image source={{ uri: form.frontImageUri }} style={styles.photoPreview} resizeMode="contain" onLoad={() => onPhotoReady('front')} onError={photoError} />
+        </Pressable> : (
           <View style={styles.photoEmpty}><Text style={styles.photoEmoji}>📷</Text><Text style={styles.emptyTitle}>Add the front</Text></View>
         )}
+        {form.frontImageUri ? <Text style={styles.photoPreviewHint}>Tap the full-card preview to inspect the meal name.</Text> : null}
         {form.frontImageUri ? (
           <View style={styles.photoStatusRow}>
             <Text style={[styles.photoStatus, photoReady.front && styles.photoStatusComplete]}>
@@ -906,9 +1058,12 @@ function AddScreen({
             <View style={styles.photoDivider} />
             <Text style={styles.photoSideTitle}>2. Cooking guide · back</Text>
             <Text style={styles.cardMuted}>Preparation steps and cooking instructions.</Text>
-            {form.backImageUri ? <Image source={{ uri: form.backImageUri }} style={styles.photoPreview} resizeMode="cover" onLoad={() => onPhotoReady('back')} onError={photoError} /> : (
+            {form.backImageUri ? <Pressable accessibilityRole="button" accessibilityLabel="Open full cooking-guide back preview" onPress={() => setPreviewPhoto({ uri: form.backImageUri, label: 'Cooking-guide back' })}>
+              <Image source={{ uri: form.backImageUri }} style={styles.photoPreview} resizeMode="contain" onLoad={() => onPhotoReady('back')} onError={photoError} />
+            </Pressable> : (
               <View style={styles.photoEmpty}><Text style={styles.photoEmoji}>📄</Text><Text style={styles.emptyTitle}>Add the back</Text></View>
             )}
+            {form.backImageUri ? <Text style={styles.photoPreviewHint}>Tap to inspect the full guide and verify it matches the front.</Text> : null}
             {form.backImageUri ? (
               <View style={styles.photoStatusRow}>
                 <Text style={[styles.photoStatus, photoReady.back && styles.photoStatusComplete]}>
@@ -955,7 +1110,7 @@ function AddScreen({
           </View>
           <Card>
             <Field label="Meal name *" value={form.name} onChangeText={value => field('name', value)} placeholder="Chicken Tikka Masala" />
-            <Field label="Description" value={form.description} onChangeText={value => field('description', value)} placeholder="Chicken with basmati rice" multiline />
+            <Field label="Sides" value={form.sides} onChangeText={value => field('sides', value)} placeholder="Green Peas" />
             <Field label="Category" value={form.category} onChangeText={value => field('category', value)} placeholder="Chicken" />
             {cookingCodeConflict && (
               <View accessibilityRole="alert" style={styles.codeWarning}>
@@ -973,48 +1128,6 @@ function AddScreen({
               autoCapitalize="none"
             />
             <Text style={styles.fieldHelp}>Confirm the code used to program the Suvie appliance.</Text>
-            <Field
-              label="Front barcode payload"
-              value={form.frontBarcodePayload}
-              onChangeText={value => setForm(current => ({
-                ...current,
-                frontBarcodePayload: value,
-                machineIdentifiersReviewed: false
-              }))}
-              placeholder="Not detected"
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
-            <Field
-              label="Back QR payload"
-              value={form.backQrPayload}
-              onChangeText={value => setForm(current => ({
-                ...current,
-                backQrPayload: value,
-                machineIdentifiersReviewed: false
-              }))}
-              placeholder="Not detected"
-              autoCorrect={false}
-              autoCapitalize="none"
-              multiline
-            />
-            <Text style={styles.fieldHelp}>
-              These are retained as separate identifiers; they may differ from the cooking code.
-            </Text>
-            {!form.machineIdentifiersReviewed && (
-              <View accessibilityRole="alert" style={styles.codeWarning}>
-                <Text style={styles.codeWarningTitle}>Review decoded identifiers</Text>
-                <Text style={styles.codeWarningText}>
-                  Confirm these values against the card. Keep them separate if they do not match
-                  the printed cooking code.
-                </Text>
-                <PrimaryButton
-                  label="Identifiers reviewed"
-                  onPress={() => field('machineIdentifiersReviewed', true)}
-                  secondary
-                />
-              </View>
-            )}
           </Card>
 
           <View style={styles.sectionHeader}>
@@ -1035,7 +1148,29 @@ function AddScreen({
           <Text style={styles.formFootnote}>Review the extracted details before adding this meal. You can correct anything the photos did not capture clearly.</Text>
         </>
       )}
+      <PhotoPreviewModal photo={previewPhoto} close={() => setPreviewPhoto(null)} />
     </ScrollView>
+  );
+}
+
+/** Shows an uncropped selected photo at the largest available size for identity review. */
+function PhotoPreviewModal({ photo, close }: {
+  photo: { uri: string; label: string } | null;
+  close: () => void;
+}) {
+  if (!photo) return null;
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={close}>
+      <View style={styles.photoModalBackdrop}>
+        <View style={styles.photoModalHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close photo preview" onPress={close} style={styles.photoModalBack}>
+            <Text style={styles.photoModalBackText}>‹ Back</Text>
+          </Pressable>
+          <Text style={styles.photoModalTitle}>{photo.label}</Text>
+        </View>
+        <Image source={{ uri: photo.uri }} style={styles.photoModalImage} resizeMode="contain" />
+      </View>
+    </Modal>
   );
 }
 
@@ -1162,7 +1297,7 @@ function PickModal({ result, busy, close, confirm, drawAgain }: {
           <Text style={styles.modalEyebrow}>HOW ABOUT THIS?</Text>
           <MealImage meal={result} large />
           <Text style={styles.modalTitle}>{result.name}</Text>
-          {result.description ? <Text style={styles.modalBody}>{result.description}</Text> : null}
+          {result.sides ? <Text style={styles.modalBody}>with {result.sides}</Text> : null}
           <View style={styles.modalPills}>
             <Pill tone="mint">2 servings</Pill>
             {carbs != null && <Pill tone="orange">{carbs}g carbs / serving</Pill>}
@@ -1213,7 +1348,7 @@ function Stat({ value, label }: { value: number; label: string }) {
 /** Converts an inventory meal into an editable API input with a new quantity. */
 function toInput(meal: Meal, quantity: number): MealInput {
   return {
-    name: meal.name, description: meal.description ?? undefined, category: meal.category ?? undefined,
+    name: meal.name, sides: meal.sides ?? undefined, category: meal.category ?? undefined,
     cookingMealCode: meal.cookingMealCode,
     frontBarcodePayload: meal.frontBarcodePayload,
     backQrPayload: meal.backQrPayload,
@@ -1222,6 +1357,26 @@ function toInput(meal: Meal, quantity: number): MealInput {
     proteinPerServing: meal.proteinPerServing, fatPerServing: meal.fatPerServing,
     sodiumMgPerServing: meal.sodiumMgPerServing, imageUrl: meal.imageUrl,
     cookingGuideImageUrl: meal.cookingGuideImageUrl, source: meal.source ?? undefined
+  };
+}
+
+/** Prefills the full inventory editor from a stored meal. */
+function editFormFromMeal(meal: Meal): EditFormState {
+  return {
+    name: meal.name,
+    sides: meal.sides ?? '',
+    category: meal.category ?? '',
+    cookingMealCode: meal.cookingMealCode ?? '',
+    frontBarcodePayload: meal.frontBarcodePayload ?? '',
+    backQrPayload: meal.backQrPayload ?? '',
+    quantity: String(meal.quantity),
+    calories: valueText(meal.caloriesPerServing),
+    carbs: valueText(meal.carbsPerServing),
+    protein: valueText(meal.proteinPerServing),
+    fat: valueText(meal.fatPerServing),
+    sodium: valueText(meal.sodiumMgPerServing),
+    imageUrl: meal.imageUrl ?? '',
+    cookingGuideImageUrl: meal.cookingGuideImageUrl ?? ''
   };
 }
 
@@ -1285,14 +1440,27 @@ const styles = StyleSheet.create({
   searchInput: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, borderRadius: 15, minHeight: 48, paddingHorizontal: 15, fontSize: 15, color: colors.ink },
   mealCard: { gap: 2 }, mealTop: { flexDirection: 'row', gap: 13 }, mealInfo: { flex: 1 }, mealNameRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between' },
   inlinePills: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 9 },
-  actionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 },
+  actionRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 14 },
   stepper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.line, borderRadius: 12, overflow: 'hidden' },
   stepperButton: { width: 34, height: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
   stepperText: { color: colors.brand, fontSize: 18, fontWeight: '800' }, stepperValue: { minWidth: 27, textAlign: 'center', color: colors.ink, fontWeight: '800' },
   smallAction: { backgroundColor: colors.brandSoft, borderRadius: 11, paddingHorizontal: 12, height: 36, justifyContent: 'center' }, smallActionText: { color: colors.brand, fontSize: 12, fontWeight: '800' },
-  deleteAction: { marginLeft: 'auto', padding: 8 }, deleteText: { color: colors.danger, fontSize: 12, fontWeight: '700' }, disabled: { opacity: 0.4 },
+  editAction: { padding: 8 }, editText: { color: colors.brand, fontSize: 12, fontWeight: '800' },
+  deleteAction: { padding: 8 }, deleteText: { color: colors.danger, fontSize: 12, fontWeight: '700' }, disabled: { opacity: 0.4 },
+  emptyInventory: { gap: 12, alignItems: 'stretch' },
+  editScreen: { flex: 1, backgroundColor: colors.background },
+  editHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingHorizontal: 18, paddingTop: 12 },
+  editContent: { width: '100%', maxWidth: 700, alignSelf: 'center', padding: 16, paddingBottom: 36, gap: 12 },
+  servingInvariant: { flex: 1, marginBottom: 13 }, servingValue: { minHeight: 45, borderRadius: 12, paddingHorizontal: 12, paddingTop: 12, backgroundColor: colors.brandSoft, color: colors.brand, fontSize: 15, fontWeight: '900' },
   photoCard: { gap: 12 }, photoSideTitle: { color: colors.ink, fontSize: 16, fontWeight: '800' },
-  photoPreview: { width: '100%', height: 210, borderRadius: 15 },
+  photoPreview: { width: '100%', height: 280, borderRadius: 15, backgroundColor: '#17181C' },
+  photoPreviewHint: { color: colors.muted, fontSize: 11, lineHeight: 16, textAlign: 'center', marginTop: -5 },
+  photoModalBackdrop: { flex: 1, backgroundColor: 'rgba(9,10,13,0.97)', paddingTop: 52, paddingBottom: 24 },
+  photoModalHeader: { minHeight: 54, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18 },
+  photoModalTitle: { flex: 1, color: '#FFFFFF', fontSize: 18, fontWeight: '900', textAlign: 'center', paddingRight: 78 },
+  photoModalBack: { minWidth: 78, minHeight: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.14)' },
+  photoModalBackText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  photoModalImage: { flex: 1, width: '100%' },
   photoEmpty: { height: 150, backgroundColor: colors.background, borderRadius: 15, alignItems: 'center', justifyContent: 'center', gap: 5, borderStyle: 'dashed', borderWidth: 1, borderColor: '#CBCAC1' },
   photoDivider: { height: 1, backgroundColor: colors.line, marginVertical: 6 },
   photoEmoji: { fontSize: 38 },

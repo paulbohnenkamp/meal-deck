@@ -25,6 +25,13 @@ type LocalState = {
 const now = () => new Date().toISOString();
 const id = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+const normalizeSides = (value?: string | null) => value?.replace(/^\s*with\s+/i, '').trim() || undefined;
+
+/** Migrates the former description field without discarding existing local data. */
+function migrateMeal<T extends Meal | MealTemplate>(value: T & { description?: string | null }): T {
+  const { description: legacySides, ...current } = value;
+  return { ...current, sides: normalizeSides(value.sides ?? legacySides) } as T;
+}
 
 /** Converts an identifier-bearing legacy inventory row into a reusable template. */
 function templateFromMeal(meal: Meal): MealTemplate | null {
@@ -38,7 +45,7 @@ function templateFromMeal(meal: Meal): MealTemplate | null {
     frontBarcodePayload: meal.frontBarcodePayload,
     backQrPayload: meal.backQrPayload,
     name: meal.name,
-    description: meal.description,
+    sides: meal.sides,
     category: meal.category,
     caloriesPerServing: meal.caloriesPerServing,
     carbsPerServing: meal.carbsPerServing,
@@ -50,24 +57,6 @@ function templateFromMeal(meal: Meal): MealTemplate | null {
     verifiedAt: meal.updatedAt
   };
 }
-
-const seed: Meal[] = [
-  {
-    id: 'sample-chicken-alfredo', name: 'Chicken Alfredo', description: 'Pasta with roasted chicken', category: 'Pasta',
-    quantity: 2, servings: 2, caloriesPerServing: 610, carbsPerServing: 54, proteinPerServing: 35,
-    fatPerServing: 28, sodiumMgPerServing: 940, source: 'SAMPLE', createdAt: now(), updatedAt: now()
-  },
-  {
-    id: 'sample-beef-bulgogi', name: 'Beef Bulgogi', description: 'Korean-style beef with rice', category: 'Beef',
-    quantity: 1, servings: 2, caloriesPerServing: 540, carbsPerServing: 62, proteinPerServing: 29,
-    fatPerServing: 19, sodiumMgPerServing: 1080, source: 'SAMPLE', createdAt: now(), updatedAt: now()
-  },
-  {
-    id: 'sample-tuscan-chicken', name: 'Tuscan Chicken', description: 'Chicken, vegetables and creamy sauce', category: 'Chicken',
-    quantity: 2, servings: 2, caloriesPerServing: 430, carbsPerServing: 21, proteinPerServing: 38,
-    fatPerServing: 22, sodiumMgPerServing: 790, source: 'SAMPLE', createdAt: now(), updatedAt: now()
-  }
-];
 
 let operationQueue = Promise.resolve();
 
@@ -91,8 +80,10 @@ async function readState(): Promise<LocalState> {
     };
     return {
       ...stored,
-      templates: stored.templates
-        ?? stored.meals.map(templateFromMeal).filter((value): value is MealTemplate => value != null),
+      meals: stored.meals.map(meal => migrateMeal(meal)),
+      templates: stored.templates?.map(template => migrateMeal(template))
+        ?? stored.meals.map(meal => templateFromMeal(migrateMeal(meal)))
+          .filter((value): value is MealTemplate => value != null),
       shipments: stored.shipments ?? []
     };
   }
@@ -101,7 +92,9 @@ async function readState(): Promise<LocalState> {
   const legacyMeals = legacy[0][1];
   const legacyHistory = legacy[1][1];
   const state: LocalState = {
-    meals: legacyMeals ? JSON.parse(legacyMeals) as Meal[] : seed.map(meal => ({ ...meal })),
+    meals: legacyMeals
+      ? (JSON.parse(legacyMeals) as Array<Meal & { description?: string | null }>).map(migrateMeal)
+      : [],
     history: legacyHistory ? JSON.parse(legacyHistory) as HistoryEntry[] : [],
     templates: [],
     shipments: []
@@ -147,7 +140,7 @@ function rememberTemplate(state: LocalState, input: MealInput) {
     frontBarcodePayload: input.frontBarcodePayload,
     backQrPayload: input.backQrPayload,
     name: input.name.trim(),
-    description: input.description,
+    sides: input.sides,
     category: input.category,
     caloriesPerServing: input.caloriesPerServing,
     carbsPerServing: input.carbsPerServing,
@@ -175,7 +168,7 @@ function templateDefinition(template: MealTemplate) {
     frontBarcodePayload: template.frontBarcodePayload,
     backQrPayload: template.backQrPayload,
     name: template.name,
-    description: template.description,
+    sides: template.sides,
     category: template.category,
     caloriesPerServing: template.caloriesPerServing,
     carbsPerServing: template.carbsPerServing,
@@ -199,7 +192,10 @@ export const localStore = {
   async addMeal(input: MealInput): Promise<Meal> {
     return serialized(async () => {
       const state = await readState();
-      const existing = state.meals.find(meal => normalize(meal.name) === normalize(input.name));
+      const cookingCode = input.cookingMealCode?.trim();
+      const existing = state.meals.find(meal =>
+        Boolean(cookingCode) && meal.cookingMealCode === cookingCode)
+        ?? state.meals.find(meal => normalize(meal.name) === normalize(input.name));
       if (existing) {
         Object.assign(existing, input, {
           id: existing.id,
@@ -225,7 +221,22 @@ export const localStore = {
       const state = await readState();
       const index = state.meals.findIndex(meal => meal.id === mealId);
       if (index < 0) throw new Error('Meal not found');
-      state.meals[index] = { ...state.meals[index], ...input, id: mealId, servings: 2, updatedAt: now() };
+      const confirmedCode = state.meals[index].cookingMealCode?.trim() || null;
+      const requestedCode = input.cookingMealCode?.trim() || null;
+      if (confirmedCode !== requestedCode) {
+        throw new Error('A confirmed cooking meal code cannot be changed.');
+      }
+      const duplicate = state.meals.some(meal =>
+        meal.id !== mealId && normalize(meal.name) === normalize(input.name));
+      if (duplicate) throw new Error('Another meal already has that name.');
+      state.meals[index] = {
+        ...state.meals[index],
+        ...input,
+        id: mealId,
+        cookingMealCode: state.meals[index].cookingMealCode,
+        servings: 2,
+        updatedAt: now()
+      };
       rememberTemplate(state, input);
       await writeState(state);
       return state.meals[index];
@@ -374,7 +385,7 @@ export const localStore = {
       const cutoff = Date.now() - avoidDays * 24 * 60 * 60 * 1000;
       const recent = new Set(state.history.filter(item => new Date(item.consumedAt).getTime() > cutoff).map(item => normalize(item.mealName)));
       return {
-        mealTypes: state.meals.length,
+        mealTypes: state.meals.filter(meal => meal.quantity > 0).length,
         totalBoxes: state.meals.reduce((sum, meal) => sum + meal.quantity, 0),
         eligibleMealTypes: state.meals.filter(meal => meal.quantity > 0 && !recent.has(normalize(meal.name))).length,
         avoidDays

@@ -14,6 +14,7 @@ import app.mealdeck.dto.MealRequest;
 import app.mealdeck.entity.Meal;
 import app.mealdeck.entity.MealHistory;
 import app.mealdeck.exception.InventoryConflictException;
+import app.mealdeck.exception.DuplicateMealNameException;
 import app.mealdeck.repository.MealHistoryRepository;
 import app.mealdeck.repository.MealRepository;
 import app.mealdeck.repository.MealTemplateRepository;
@@ -73,6 +74,20 @@ class MealDeckServiceTest {
     }
 
     @Test
+    void dashboardDoesNotCountAnOutOfStockMealType() {
+        var meal = service.addMeal(request("Last box", 1));
+        assertThat(service.dashboard(7).mealTypes()).isEqualTo(1);
+
+        service.consume(meal.id(), 7);
+
+        var dashboard = service.dashboard(7);
+        assertThat(dashboard.totalBoxes()).isZero();
+        assertThat(dashboard.mealTypes()).isZero();
+        assertThat(dashboard.eligibleMealTypes()).isZero();
+        assertThat(service.listHistory()).hasSize(1);
+    }
+
+    @Test
     void mealStoresFrontAndCookingGuideImages() {
         var request = new MealRequest(
                 "Teriyaki Salmon", null, null, " 012-A ", " 310012345678 ",
@@ -128,10 +143,77 @@ class MealDeckServiceTest {
 
         var latest = templateService.lookup("https://suvie.com/m/012-A");
         assertThat(latest.revision()).isEqualTo(2);
-        assertThat(latest.description()).isEqualTo("Salmon with brown rice");
+        assertThat(latest.sides()).isEqualTo("Salmon with brown rice");
         assertThat(latest.caloriesPerServing()).isEqualTo(525);
         assertThat(templates.count()).isEqualTo(2);
         assertThat(templates.findAll()).filteredOn(template -> template.isActive()).hasSize(1);
+    }
+
+    @Test
+    void updateReplacesEveryEditableFieldAndPreservesTwoServings() {
+        var saved = service.addMeal(new MealRequest(
+                "Old meal", null, null, "007-A", null, null, 1,
+                500, 40, 30, 20, 700, null, null, "TEST"));
+        var replacement = new MealRequest(
+                "New meal", "Updated sides", "Vegetarian", "007-A",
+                "001234567890", "https://example.test/meal/007-A", 3,
+                420, 38, 27, 16, 760, "/new-front.heic", "/new-back.heic", "EDITED");
+
+        var updated = service.updateMeal(saved.id(), replacement);
+
+        assertThat(updated.name()).isEqualTo("New meal");
+        assertThat(updated.sides()).isEqualTo("Updated sides");
+        assertThat(updated.category()).isEqualTo("Vegetarian");
+        assertThat(updated.cookingMealCode()).isEqualTo("007-A");
+        assertThat(updated.frontBarcodePayload()).isEqualTo("001234567890");
+        assertThat(updated.backQrPayload()).isEqualTo("https://example.test/meal/007-A");
+        assertThat(updated.quantity()).isEqualTo(3);
+        assertThat(updated.servings()).isEqualTo(2);
+        assertThat(updated.caloriesPerServing()).isEqualTo(420);
+        assertThat(updated.carbsPerServing()).isEqualTo(38);
+        assertThat(updated.proteinPerServing()).isEqualTo(27);
+        assertThat(updated.fatPerServing()).isEqualTo(16);
+        assertThat(updated.sodiumMgPerServing()).isEqualTo(760);
+        assertThat(updated.imageUrl()).isEqualTo("/new-front.heic");
+        assertThat(updated.cookingGuideImageUrl()).isEqualTo("/new-back.heic");
+    }
+
+    @Test
+    void exactCookingCodeMatchesExistingInventoryBeforeEditedName() {
+        service.addMeal(new MealRequest(
+                "Sweet Thai Chili Crab Cakes", "with Green Peas", "Seafood", "F99",
+                null, null, 1, 530, 71, 13, 17, 1100, null, null, "PHOTO"));
+
+        var consolidated = service.addMeal(new MealRequest(
+                "Edited display name", "with Green Peas", "Seafood", "F99",
+                null, null, 2, 530, 71, 13, 17, 1100, null, null, "PHOTO"));
+
+        assertThat(consolidated.quantity()).isEqualTo(3);
+        assertThat(meals.count()).isEqualTo(1);
+        assertThat(consolidated.cookingMealCode()).isEqualTo("F99");
+    }
+
+    @Test
+    void updateRejectsChangingAConfirmedCookingCode() {
+        var saved = service.addMeal(new MealRequest(
+                "Meal", null, null, "007-A", null, null, 1,
+                500, 40, 30, 20, 700, null, null, "TEST"));
+
+        assertThatThrownBy(() -> service.updateMeal(saved.id(), new MealRequest(
+                "Meal", null, null, "008-B", null, null, 1,
+                500, 40, 30, 20, 700, null, null, "TEST")))
+                .isInstanceOf(InventoryConflictException.class)
+                .hasMessageContaining("cannot be changed");
+    }
+
+    @Test
+    void updateRejectsAnotherMealsNormalizedName() {
+        var first = service.addMeal(request("Meal One", 1));
+        service.addMeal(request("Meal Two", 1));
+
+        assertThatThrownBy(() -> service.updateMeal(first.id(), request(" meal--two ", 1)))
+                .isInstanceOf(DuplicateMealNameException.class);
+        assertThat(meals.count()).isEqualTo(2);
     }
 
     private MealRequest request(String name, int quantity) {

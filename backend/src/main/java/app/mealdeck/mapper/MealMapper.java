@@ -16,7 +16,7 @@ public class MealMapper {
         return new MealResponse(
                 meal.getId(),
                 meal.getName(),
-                meal.getDescription(),
+                meal.getSides(),
                 meal.getCategory(),
                 meal.getCookingMealCode(),
                 meal.getFrontBarcodePayload(),
