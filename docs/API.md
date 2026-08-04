@@ -30,8 +30,8 @@ The values below are illustrative. The actual values come from the photographed 
 
 ```json
 {
-  "name": "Teriyaki Salmon with White Rice and Broccoli",
-  "description": "Teriyaki-glazed salmon served with white rice and broccoli",
+  "name": "Teriyaki Salmon",
+  "sides": "White Rice and Broccoli",
   "category": "Seafood",
   "frontCookingMealCode": "012-A",
   "backCookingMealCode": "012-A",
@@ -50,12 +50,12 @@ This response only prefills the review screen. It does not change inventory.
 
 ### 2. Reviewed add-meal request
 
-After review, the client uploads both photos and sends the confirmed values to `POST /api/meals`. Each capture adds one meal; matching normalized names consolidate in inventory.
+After review, the client uploads both photos and sends the confirmed values to `POST /api/meals`. Each capture adds one meal; exact cooking codes match first, with normalized names as the fallback.
 
 ```json
 {
-  "name": "Teriyaki Salmon with White Rice and Broccoli",
-  "description": "Teriyaki-glazed salmon served with white rice and broccoli",
+  "name": "Teriyaki Salmon",
+  "sides": "White Rice and Broccoli",
   "category": "Seafood",
   "cookingMealCode": "012-A",
   "frontBarcodePayload": "310012345678",
@@ -79,8 +79,8 @@ The saved response includes server-owned identity, fixed serving count, consolid
 ```json
 {
   "id": "ef63bc2d-cdf7-43ec-b9cb-ab74e554dc82",
-  "name": "Teriyaki Salmon with White Rice and Broccoli",
-  "description": "Teriyaki-glazed salmon served with white rice and broccoli",
+  "name": "Teriyaki Salmon",
+  "sides": "White Rice and Broccoli",
   "category": "Seafood",
   "cookingMealCode": "012-A",
   "frontBarcodePayload": "310012345678",
@@ -113,8 +113,8 @@ front-barcode payload, or back-QR payload:
   "cookingMealCode": "012-A",
   "frontBarcodePayload": "310012345678",
   "backQrPayload": "https://suvie.com/m/012-A",
-  "name": "Teriyaki Salmon with White Rice and Broccoli",
-  "description": "Teriyaki-glazed salmon served with white rice and broccoli",
+  "name": "Teriyaki Salmon",
+  "sides": "White Rice and Broccoli",
   "category": "Seafood",
   "caloriesPerServing": 510,
   "carbsPerServing": 42,

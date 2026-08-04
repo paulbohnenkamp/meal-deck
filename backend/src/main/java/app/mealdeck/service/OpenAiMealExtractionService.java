@@ -21,12 +21,16 @@ import app.mealdeck.dto.MealExtractionResponse;
  * Uses Spring AI multimodal chat to extract structured meal-card data.
  */
 public class OpenAiMealExtractionService implements MealExtractionService {
-    private static final String PROMPT = """
+    static final String PROMPT = """
             Extract one prepared meal from these two images. The first is the meal-card front;
             the second is the cooking-guide back. Return only facts visible in the images.
             Nutrition must be per serving, never whole-package totals. Use null when unreadable.
-            Description should be a short factual meal overview. Category should be a short
-            useful grouping such as Chicken, Beef, Seafood, Pasta, or Vegetarian.
+            The front card uses two distinct title lines. Set name to only the prominent bold
+            primary title, such as "Sweet Thai Chili Crab Cakes". Never append the smaller
+            subtitle beginning with "with" to name. Set sides to the subtitle content after the
+            leading "with", such as "Green Peas" or "White Rice and Broccoli". If no subtitle is visible, use null;
+            do not invent or summarize one. Category should be a short useful grouping such as
+            Chicken, Beef, Seafood, Pasta, or Vegetarian.
             Read the printed appliance cooking meal code independently from the bottom of the
             front card and from the cooking-guide back. Preserve every character, including
             leading zeroes, letters, punctuation, and capitalization. Set frontCookingMealCode
@@ -107,9 +111,10 @@ public class OpenAiMealExtractionService implements MealExtractionService {
             MealExtractionResponse response,
             String frontBarcodePayload,
             String backQrPayload) {
+        String[] title = separateTitle(response.name(), response.sides());
         return new MealExtractionResponse(
-                response.name(),
-                response.description(),
+                title[0],
+                title[1],
                 response.category(),
                 response.frontCookingMealCode(),
                 response.backCookingMealCode(),
@@ -121,6 +126,22 @@ public class OpenAiMealExtractionService implements MealExtractionService {
                 response.proteinPerServing(),
                 response.fatPerServing(),
                 response.sodiumMgPerServing());
+    }
+
+    /** Separates the provider's consistently printed "with ..." subtitle. */
+    static String[] separateTitle(String name, String sides) {
+        if (name == null) return new String[] { null, withoutLeadingWith(sides) };
+        int subtitleStart = name.toLowerCase(java.util.Locale.ROOT).indexOf(" with ");
+        if (subtitleStart < 1) return new String[] { name, withoutLeadingWith(sides) };
+        return new String[] {
+                name.substring(0, subtitleStart).trim(),
+                name.substring(subtitleStart + " with ".length()).trim()
+        };
+    }
+
+    private static String withoutLeadingWith(String sides) {
+        if (sides == null) return null;
+        return sides.replaceFirst("(?i)^\\s*with\\s+", "").trim();
     }
 
     private Media image(MultipartFile file) throws IOException {

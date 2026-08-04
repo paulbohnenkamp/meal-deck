@@ -11,3 +11,4 @@ mobile/dist-test/
 backend/target/
 backend/data/
 .mvn/download/
+meal-samples/

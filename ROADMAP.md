@@ -2,12 +2,13 @@
 
 ## Milestone 1 — MVP hardening
 
-- Edit all meal details from the inventory screen
+- [x] Edit all meal details from the inventory screen
 - Better duplicate review when names are similar but not identical
-- Empty-state onboarding and “replace sample data” action
+- [x] Empty-state onboarding; new installations intentionally start with no meals
 - Configurable repeat window, defaulting to seven days
 - Accessibility labels and VoiceOver testing
 - EAS development and TestFlight build profiles
+- Android emulator test launcher with private sample-photo import and HEIC/JPEG fallback
 - API integration tests and mobile component tests
 
 ## Milestone 2 — Photo-to-meal extraction
@@ -17,7 +18,7 @@
 - [x] Guided meal-card front and cooking-guide back capture
 - [x] Explicit “Read meal card” consent before photos are uploaded
 - [x] Backend-only OpenAI vision integration with structured extraction
-- [x] Extract name, description, category, calories, carbs, protein, fat, and sodium
+- [x] Extract name, sides, category, calories, carbs, protein, fat, and sodium
 - [x] Keep nutrition values per serving
 - [x] Mandatory editable review before inventory mutation
 - [x] Store both photos with the confirmed meal
@@ -114,7 +115,7 @@ MealTemplate
   frontBarcodePayload
   backQrPayload
   normalizedName
-  description and category
+  sides and category
   per-serving nutrition
   front/back reference images
   revision, active, and verifiedAt

@@ -2,7 +2,7 @@
 export type Meal = {
   id: string;
   name: string;
-  description?: string | null;
+  sides?: string | null;
   category?: string | null;
   cookingMealCode?: string | null;
   frontBarcodePayload?: string | null;
@@ -24,7 +24,7 @@ export type Meal = {
 /** Editable values accepted when a meal is created or updated. */
 export type MealInput = {
   name: string;
-  description?: string;
+  sides?: string;
   category?: string;
   cookingMealCode?: string | null;
   frontBarcodePayload?: string | null;
@@ -43,7 +43,7 @@ export type MealInput = {
 /** Reviewable fields extracted from meal-card photos by the backend. */
 export type MealExtraction = {
   name?: string | null;
-  description?: string | null;
+  sides?: string | null;
   category?: string | null;
   frontCookingMealCode?: string | null;
   backCookingMealCode?: string | null;
@@ -67,7 +67,7 @@ export type MealTemplate = {
   frontBarcodePayload?: string | null;
   backQrPayload?: string | null;
   name: string;
-  description?: string | null;
+  sides?: string | null;
   category?: string | null;
   caloriesPerServing?: number | null;
   carbsPerServing?: number | null;

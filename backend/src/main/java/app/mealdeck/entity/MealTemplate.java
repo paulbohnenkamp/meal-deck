@@ -32,7 +32,8 @@ public class MealTemplate {
     private String name;
     @Column(nullable = false)
     private String normalizedName;
-    private String description;
+    @Column(name = "description")
+    private String sides;
     private String category;
     private Integer caloriesPerServing;
     private Integer carbsPerServing;
@@ -71,8 +72,8 @@ public class MealTemplate {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getNormalizedName() { return normalizedName; }
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
+    public String getSides() { return sides; }
+    public void setSides(String sides) { this.sides = sides; }
     public String getCategory() { return category; }
     public void setCategory(String category) { this.category = category; }
     public Integer getCaloriesPerServing() { return caloriesPerServing; }

@@ -7,7 +7,7 @@ import jakarta.validation.constraints.NotBlank;
  * Client-supplied values for creating or updating an inventory meal.
  *
  * @param name required display name
- * @param description optional meal overview
+ * @param sides printed side dishes without the leading word "with"
  * @param category optional grouping
  * @param cookingMealCode user-confirmed appliance cooking code
  * @param frontBarcodePayload reviewed raw front-barcode payload
@@ -24,7 +24,7 @@ import jakarta.validation.constraints.NotBlank;
  */
 public record MealRequest(
         @NotBlank String name,
-        String description,
+        String sides,
         String category,
         String cookingMealCode,
         String frontBarcodePayload,

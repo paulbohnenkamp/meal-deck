@@ -67,7 +67,8 @@ public class MealDeckService {
     }
 
     /**
-     * Adds boxes, consolidating duplicates by normalized meal name.
+     * Adds boxes, matching an exact cooking code first and otherwise
+     * consolidating duplicates by normalized meal name.
      *
      * @param request new meal values
      * @return saved consolidated inventory meal
@@ -75,12 +76,17 @@ public class MealDeckService {
     @Transactional
     public MealResponse addMeal(MealRequest request) {
         String normalized = Meal.normalize(request.name());
-        Meal meal = meals.findByNormalizedName(normalized).orElseGet(Meal::new);
+        String cookingCode = cleanCode(request.cookingMealCode());
+        Meal meal = (cookingCode == null
+                ? meals.findByNormalizedName(normalized)
+                : meals.findFirstByCookingMealCode(cookingCode)
+                        .or(() -> meals.findByNormalizedName(normalized)))
+                .orElseGet(Meal::new);
         boolean existing = meal.getId() != null;
         meal.setName(request.name().trim());
-        meal.setDescription(request.description());
+        meal.setSides(request.sides());
         meal.setCategory(request.category());
-        meal.setCookingMealCode(cleanCode(request.cookingMealCode()));
+        meal.setCookingMealCode(cookingCode);
         meal.setFrontBarcodePayload(cleanCode(request.frontBarcodePayload()));
         meal.setBackQrPayload(cleanCode(request.backQrPayload()));
         meal.setQuantity((existing ? meal.getQuantity() : 0) + valueOr(request.quantity(), 1));
@@ -108,10 +114,16 @@ public class MealDeckService {
     @Transactional
     public MealResponse updateMeal(UUID id, MealRequest request) {
         Meal meal = getMeal(id);
+        if (!java.util.Objects.equals(
+                cleanCode(request.cookingMealCode()), meal.getCookingMealCode())) {
+            throw new InventoryConflictException(
+                    "A confirmed cooking meal code cannot be changed");
+        }
         meal.setName(request.name().trim());
-        meal.setDescription(request.description());
+        meal.setSides(request.sides());
         meal.setCategory(request.category());
-        meal.setCookingMealCode(cleanCode(request.cookingMealCode()));
+        // A confirmed cooking code is the stable provider identity. Corrections
+        // happen during extraction review before the inventory row is created.
         meal.setFrontBarcodePayload(cleanCode(request.frontBarcodePayload()));
         meal.setBackQrPayload(cleanCode(request.backQrPayload()));
         meal.setQuantity(valueOr(request.quantity(), meal.getQuantity()));
@@ -252,8 +264,9 @@ public class MealDeckService {
         List<Meal> all = meals.findAll();
         Set<String> recent = recentNames(avoidDays);
         int boxes = all.stream().mapToInt(Meal::getQuantity).sum();
+        long stockedTypes = all.stream().filter(m -> m.getQuantity() > 0).count();
         long eligible = all.stream().filter(m -> m.getQuantity() > 0 && !recent.contains(m.getNormalizedName())).count();
-        return new DashboardResponse(all.size(), boxes, eligible, avoidDays);
+        return new DashboardResponse(stockedTypes, boxes, eligible, avoidDays);
     }
 
     private Set<String> recentNames(int avoidDays) {

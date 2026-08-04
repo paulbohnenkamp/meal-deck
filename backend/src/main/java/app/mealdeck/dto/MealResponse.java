@@ -8,7 +8,7 @@ import java.util.UUID;
  *
  * @param id meal identifier
  * @param name display name
- * @param description meal overview
+ * @param sides printed side dishes without the leading word "with"
  * @param category meal grouping
  * @param cookingMealCode appliance cooking code
  * @param frontBarcodePayload reviewed raw front-barcode payload
@@ -29,7 +29,7 @@ import java.util.UUID;
 public record MealResponse(
         UUID id,
         String name,
-        String description,
+        String sides,
         String category,
         String cookingMealCode,
         String frontBarcodePayload,
